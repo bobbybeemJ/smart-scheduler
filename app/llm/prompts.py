@@ -27,6 +27,11 @@ meeting should be.
 4. Use the condensed session state only to fill in duration_minutes when the user is clearly \
 continuing an already-established conversation about a meeting whose duration was given earlier \
 - never use it to fill in a duration for an unrelated new request.
+5. If the condensed session state shows a meeting is already established (an "established_constraint" \
+is present) and the user's message ONLY changes the duration - with no new day/time information \
+at all (e.g. "actually we need a full hour now", "let's make it 45 minutes instead") - use \
+"duration_update" with just the new duration_minutes. Do not restate or guess the day/time \
+constraints; the dialogue layer keeps those unchanged on its own.
 """
 
 

@@ -87,6 +87,17 @@ class SimpleDateTime(BaseModel):
     raw_phrase: str
 
 
+class DurationUpdate(BaseModel):
+    """"actually we need a full hour now" - a correction to an already-established duration,
+    with day/time constraints unchanged. Only used when the message is purely a duration
+    correction to a meeting already being discussed; the dialogue layer (Phase 3) merges this
+    into the existing established expression and re-resolves, rather than restarting the
+    conversation."""
+
+    kind: Literal["duration_update"] = "duration_update"
+    duration_minutes: int
+
+
 TemporalExpression = Union[
     DeadlineBefore,
     EventRelative,
@@ -95,6 +106,7 @@ TemporalExpression = Union[
     ContextualReference,
     DynamicBuffer,
     SimpleDateTime,
+    DurationUpdate,
 ]
 
 

@@ -14,6 +14,7 @@ from app.schemas import (
     CalendarArithmeticExpr,
     ContextualReference,
     DeadlineBefore,
+    DurationUpdate,
     DynamicBuffer,
     EventRelative,
     RelativeRangeWithExclusions,
@@ -47,7 +48,7 @@ def resolve(
     find_event: Optional[CalendarLookupFn] = None,
     find_last_meeting: Optional[LastMeetingLookupFn] = None,
 ) -> ResolvedConstraints:
-    if not isinstance(expr, ContextualReference) and getattr(expr, "duration_minutes", None) is None:
+    if not isinstance(expr, (ContextualReference, DurationUpdate)) and getattr(expr, "duration_minutes", None) is None:
         raise MissingDurationError(
             "duration_minutes is not known yet - ask the user how long the meeting should be "
             "before calling resolve()."
@@ -68,6 +69,11 @@ def resolve(
         raise ValueError(
             "ContextualReference has no standalone window. Call resolve_contextual_duration() "
             "first, then resolve() the other constraint already established in session state."
+        )
+    if isinstance(expr, DurationUpdate):
+        raise ValueError(
+            "DurationUpdate has no standalone window. The dialogue layer must merge it into the "
+            "existing established expression and call resolve() on that, not on this directly."
         )
     raise ValueError(f"Unhandled temporal expression: {expr!r}")
 

@@ -74,6 +74,13 @@ _CANNED_RESPONSES: list[tuple[str, dict]] = [
             "raw_phrase": "Tuesday at 2pm",
         },
     ),
+    (
+        "full hour",
+        {
+            "kind": "duration_update",
+            "duration_minutes": 60,
+        },
+    ),
 ]
 
 
