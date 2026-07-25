@@ -13,3 +13,4 @@ client_secret*.json
 htmlcov/
 *.egg-info/
 .DS_Store
+data/usual_meeting_defaults.json

@@ -39,19 +39,29 @@ def duration_updated(new_duration: int) -> list[str]:
     return [f"Got it, updating this to {new_duration} minutes", "and keeping the day/time preference you already gave me."]
 
 
-def present_available_slot(slot: TimeWindow, duration_minutes: int, was_widened: bool) -> list[str]:
-    """The real answer, replacing Phase 3's placeholder - an actual free slot found via
-    freebusy, ranked by closeness to the stated preference."""
-    lead_in = (
-        "I couldn't find anything in your original window, but I found this a bit further out:"
-        if was_widened
-        else "I found a slot that works:"
-    )
-    return [
-        lead_in,
-        f"{_format_dt(slot.start)}, for {duration_minutes} minutes.",
-        "Should I book it?",
-    ]
+def present_available_slot(slots: list[TimeWindow], duration_minutes: int, was_widened: bool) -> list[str]:
+    """The real answer, replacing Phase 3's placeholder - actual free slot(s) found via
+    freebusy, ranked by closeness to the stated preference. Presents up to a few ranked options
+    instead of just "the next open slot" - still exactly 3 clauses regardless of how many
+    options there are (1-3), so this doesn't add extra TTS synthesis calls."""
+    if was_widened:
+        lead_in = (
+            "I couldn't find anything in your original window, but I found this a bit further out:"
+            if len(slots) == 1
+            else "I couldn't find anything in your original window, but here are a few options a bit further out:"
+        )
+    else:
+        lead_in = "I found a slot that works:" if len(slots) == 1 else "I found a few options:"
+
+    if len(slots) == 1:
+        body = f"{_format_dt(slots[0].start)}, for {duration_minutes} minutes."
+        ask = "Should I book it?"
+    else:
+        options = "; ".join(_format_dt(slot.start) for slot in slots)
+        body = f"{options}; all for {duration_minutes} minutes."
+        ask = "Which one works, or I can book the first one?"
+
+    return [lead_in, body, ask]
 
 
 def no_slots_even_after_widening() -> list[str]:

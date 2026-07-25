@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.tts.streamer import check_engine_health
+from app.tts.streamer import check_engine_health, synthesize_filler
 from app.ws.handler import websocket_endpoint
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -24,6 +24,15 @@ async def lifespan(app: FastAPI):
     logger.info("TTS engine health: %s", health)
     if not health["edge_tts"] and not health["pyttsx3"]:
         logger.error("Both TTS engines failed the health check - voice replies will not work.")
+
+    # Pre-warm the filler-phrase cache so the very first real turn doesn't pay a fresh
+    # synthesis cost for it either - see app/tts/streamer.py's perceived-latency mask.
+    try:
+        await synthesize_filler()
+        logger.info("Filler phrase pre-warmed.")
+    except Exception:
+        logger.exception("Failed to pre-warm filler phrase - it will synthesize fresh on first use")
+
     yield
 
 

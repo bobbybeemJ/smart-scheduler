@@ -27,6 +27,11 @@ async def run(turns, url="ws://127.0.0.1:8001/ws"):
 
             raw = await asyncio.wait_for(ws.recv(), timeout=15)
             msg = json.loads(raw)
+            if msg["type"] == "audio_clause" and msg["index"] == -1:
+                # The perceived-latency filler, sent before the real reply is computed.
+                print(f"  filler audio_clause: {len(base64.b64decode(msg['audio_base64']))} bytes")
+                raw = await asyncio.wait_for(ws.recv(), timeout=15)
+                msg = json.loads(raw)
             if msg["type"] == "error":
                 print(f"  ERROR: {msg['message']}")
                 continue

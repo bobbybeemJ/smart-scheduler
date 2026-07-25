@@ -24,6 +24,10 @@ async def run(sample_path: pathlib.Path, url="ws://127.0.0.1:8001/ws"):
 
         raw = await asyncio.wait_for(ws.recv(), timeout=30)
         msg = json.loads(raw)
+        if msg["type"] == "audio_clause" and msg["index"] == -1:
+            print(f"  filler audio_clause: {len(base64.b64decode(msg['audio_base64']))} bytes")
+            raw = await asyncio.wait_for(ws.recv(), timeout=30)
+            msg = json.loads(raw)
         if msg["type"] == "error":
             print(f"  ERROR: {msg['message']}")
             return

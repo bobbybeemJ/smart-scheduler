@@ -7,6 +7,7 @@ adds stt/tts/total and logs the complete picture."""
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import time
@@ -18,7 +19,7 @@ from app.calendar_client import client as calendar_client
 from app.dialogue.manager import DialogueManager
 from app.stt.whisper_local import STTFallbackDisabledError, transcribe_fallback
 from app.telemetry.timing import Stopwatch
-from app.tts.streamer import ENGINE_MIME_TYPES, synthesize_clauses
+from app.tts.streamer import ENGINE_MIME_TYPES, synthesize_clauses, synthesize_filler
 from app.ws.protocol import AudioChunkMessage, AudioClauseMessage, ErrorMessage, ReplyClausesMessage, TranscriptMessage
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         find_last_meeting=calendar_client.find_last_event_of_day,
         freebusy_fn=calendar_client.freebusy,
         insert_event_fn=calendar_client.insert_event,
+        persist_usual_meeting_defaults=True,
     )
     audio_buffer = bytearray()
 
@@ -79,8 +81,29 @@ async def _transcribe_fallback_safe(websocket: WebSocket, audio_bytes: bytes) ->
 async def _handle_turn(websocket: WebSocket, manager: DialogueManager, text: str, stt_ms: float) -> None:
     turn_start = time.perf_counter()
 
+    # Perceived-latency mask: play a short, cache-warmed filler immediately, before the real
+    # (potentially multi-second) LLM/resolve/calendar work even starts, so the user hears
+    # something right away instead of sitting in silence. Best-effort - a filler failure should
+    # never block the real reply.
     try:
-        clauses = manager.handle_turn(text)
+        filler_audio, filler_engine = await synthesize_filler()
+        await websocket.send_json(
+            AudioClauseMessage(
+                index=-1,
+                audio_base64=base64.b64encode(filler_audio).decode("ascii"),
+                mime_type=ENGINE_MIME_TYPES.get(filler_engine, "audio/mpeg"),
+            ).model_dump()
+        )
+    except Exception:
+        logger.exception("Filler synthesis failed - continuing without it")
+
+    try:
+        # manager.handle_turn() makes blocking synchronous calls (Gemini, Calendar) - running it
+        # directly here would freeze the whole async event loop (and every other connection)
+        # for the entire duration of every turn. Offloading to a thread keeps the server
+        # responsive and lets the filler audio above actually get sent before this finishes.
+        loop = asyncio.get_running_loop()
+        clauses = await loop.run_in_executor(None, manager.handle_turn, text)
     except Exception:
         # Defense-in-depth crash guard - Phase 7 already handles specific Calendar/LLM failures
         # gracefully inside manager.py; this catches anything unexpected that slips past it.

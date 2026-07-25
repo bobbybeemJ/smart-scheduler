@@ -118,6 +118,16 @@ def delete_event(event_id: str, calendar_id: str = "primary") -> None:
     service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
 
 
+def get_event(event_id: str, calendar_id: str = "primary") -> dict:
+    """Unambiguous lookup by the exact id insert_event() returned - unlike find_event_by_name,
+    this can never accidentally match a different same-named event nearby (found the hard way:
+    a leftover orphaned test event confused a name+time-range search into verifying the wrong
+    event entirely)."""
+    service = get_calendar_service()
+    event = service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+    return _to_simple_event(event)
+
+
 def _to_simple_event(event: dict) -> dict:
     return {
         "id": event["id"],

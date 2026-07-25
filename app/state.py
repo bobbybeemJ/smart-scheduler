@@ -19,8 +19,15 @@ class SessionState(BaseModel):
     resolved_constraints: Optional[ResolvedConstraints] = None
     usual_meeting_defaults: dict[str, int] = Field(default_factory=dict)
     phase: Phase = "gathering"
-    top_candidate: Optional[TimeWindow] = None
+    top_candidates: list[TimeWindow] = Field(default_factory=list)
     top_candidate_was_widened: bool = False
+
+    @property
+    def top_candidate(self) -> Optional[TimeWindow]:
+        """Read-only convenience accessor - the top (first) of top_candidates, or None. Kept so
+        existing callers/tests that only ever cared about "the" proposed slot don't need to
+        change; new code should read top_candidates directly."""
+        return self.top_candidates[0] if self.top_candidates else None
 
     def condensed_state(self) -> dict:
         """What actually goes to the LLM each turn - small and flat regardless of how many
