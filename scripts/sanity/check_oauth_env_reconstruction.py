@@ -1,18 +1,15 @@
 """Phase 0 sanity check: simulates what happens after a Render restart, where the filesystem
 is wiped and any local token.json is gone. Temporarily hides token.json (if present) and proves
-credentials can still be built and used from env vars alone."""
+credentials can still be built and used from env vars alone via app.calendar_client.
+Run as: python -m scripts.sanity.check_oauth_env_reconstruction"""
 
-import os
 import pathlib
-import sys
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from check_oauth_list_calendars import build_credentials_from_env  # noqa: E402
-from googleapiclient.discovery import build  # noqa: E402
+from app.calendar_client.client import list_calendars  # noqa: E402
 
 TOKEN_FILE = pathlib.Path(__file__).resolve().parent.parent.parent / "token.json"
 
@@ -26,12 +23,10 @@ def main():
 
     try:
         assert not TOKEN_FILE.exists(), "token.json still present - test is not isolated"
-        creds = build_credentials_from_env()
-        service = build("calendar", "v3", credentials=creds)
-        result = service.calendarList().list().execute()
+        calendars = list_calendars()
         print(
             f"OK: reconstructed credentials from env vars alone (no token.json) and listed "
-            f"{len(result.get('items', []))} calendar(s)."
+            f"{len(calendars)} calendar(s)."
         )
     finally:
         if hidden is not None:

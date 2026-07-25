@@ -8,15 +8,11 @@ by hand if you want a spread, don't put it in a CI loop.
 
 import asyncio
 import os
-import sys
 import time
-import pathlib
 
 from dotenv import load_dotenv
 
 load_dotenv()
-
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "sanity"))
 
 
 def bench_gemini() -> float:
@@ -25,7 +21,7 @@ def bench_gemini() -> float:
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         return float("nan")
-    model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash-lite")
+    model = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")
     client = genai.Client(api_key=api_key)
 
     start = time.perf_counter()
@@ -34,26 +30,17 @@ def bench_gemini() -> float:
 
 
 def bench_calendar_freebusy() -> float:
-    from check_oauth_list_calendars import build_credentials_from_env
-    from googleapiclient.discovery import build
     import datetime as dt
 
+    from app.calendar_client.client import freebusy
+
     try:
-        creds = build_credentials_from_env()
-    except SystemExit:
+        now = dt.datetime.now(dt.timezone.utc)
+        start = time.perf_counter()
+        freebusy(now, now + dt.timedelta(hours=1))
+        return (time.perf_counter() - start) * 1000
+    except RuntimeError:
         return float("nan")
-
-    service = build("calendar", "v3", credentials=creds)
-    now = dt.datetime.now(dt.timezone.utc)
-    body = {
-        "timeMin": now.isoformat(),
-        "timeMax": (now + dt.timedelta(hours=1)).isoformat(),
-        "items": [{"id": "primary"}],
-    }
-
-    start = time.perf_counter()
-    service.freebusy().query(body=body).execute()
-    return (time.perf_counter() - start) * 1000
 
 
 def bench_tts_first_byte() -> float:
