@@ -6,6 +6,8 @@ from __future__ import annotations
 import datetime as dt
 from typing import Callable, Optional
 
+import dateparser
+
 from app.dateresolve import helpers
 from app.schemas import (
     CalendarArithmetic,
@@ -16,6 +18,7 @@ from app.schemas import (
     EventRelative,
     RelativeRangeWithExclusions,
     ResolvedConstraints,
+    SimpleDateTime,
     TemporalExpression,
     TimeWindow,
 )
@@ -47,6 +50,8 @@ def resolve(
         return _resolve_relative_range(expr, now)
     if isinstance(expr, DynamicBuffer):
         return _resolve_dynamic_buffer(expr, now, find_last_meeting)
+    if isinstance(expr, SimpleDateTime):
+        return _resolve_simple_datetime(expr, now)
     if isinstance(expr, ContextualReference):
         raise ValueError(
             "ContextualReference has no standalone window. Call resolve_contextual_duration() "
@@ -145,3 +150,34 @@ def _resolve_dynamic_buffer(
         search_windows=[TimeWindow(start=earliest_start, end=end_of_evening)],
         earliest_start=earliest_start,
     )
+
+
+def _resolve_simple_datetime(expr: SimpleDateTime, now: dt.datetime) -> ResolvedConstraints:
+    day_part = helpers.day_part_in_phrase(expr.raw_phrase)
+    remainder = helpers.strip_day_part(expr.raw_phrase) if day_part else expr.raw_phrase
+
+    base_date = helpers.try_parse_weekday_only(now, remainder)
+    explicit_time: Optional[tuple[int, int]] = None
+
+    if base_date is None:
+        parsed = dateparser.parse(remainder, settings={"RELATIVE_BASE": now, "PREFER_DATES_FROM": "future"})
+        if parsed is None:
+            raise UnresolvedReferenceError(f"Could not parse date/time phrase: {expr.raw_phrase!r}")
+        base_date = parsed.date()
+        # dateparser copies now's time-of-day when the phrase has no explicit time - so a
+        # differing time (or an explicit am/pm/colon token in the text) means one was stated.
+        if helpers.phrase_has_explicit_time(remainder) or (parsed.hour, parsed.minute) != (now.hour, now.minute):
+            explicit_time = (parsed.hour, parsed.minute)
+
+    if day_part is not None:
+        start_hour, end_hour = helpers.DAY_PART_WINDOWS[day_part]
+        start, end = helpers.business_hours_window(base_date, start_hour, end_hour)
+    elif explicit_time is not None:
+        start = dt.datetime.combine(base_date, dt.time(hour=explicit_time[0], minute=explicit_time[1]))
+        _, end = helpers.business_hours_window(base_date)
+        if end <= start:
+            end = start + dt.timedelta(hours=1)
+    else:
+        start, end = helpers.business_hours_window(base_date)
+
+    return ResolvedConstraints(duration_minutes=expr.duration_minutes, search_windows=[TimeWindow(start=start, end=end)])

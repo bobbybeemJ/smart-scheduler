@@ -13,6 +13,7 @@ from app.schemas import (
     DynamicBuffer,
     EventRelative,
     RelativeRangeWithExclusions,
+    SimpleDateTime,
     TimePreference,
 )
 from tests.fixtures.calendar_fixtures import (
@@ -98,6 +99,19 @@ def main() -> None:
     )
     print("\n--- contextual_reference: 'our usual sync-up' ---")
     print(f"  resolved duration_minutes: {duration}")
+
+    show(
+        "simple_datetime: 'Tuesday at 2pm' (exact time stated)",
+        resolve(SimpleDateTime(duration_minutes=30, raw_phrase="Tuesday at 2pm"), NOW),
+    )
+    show(
+        "simple_datetime: 'tomorrow morning' (day-part, no exact time)",
+        resolve(SimpleDateTime(duration_minutes=30, raw_phrase="tomorrow morning"), NOW),
+    )
+    show(
+        "simple_datetime: 'next Monday' (date only, no time)",
+        resolve(SimpleDateTime(duration_minutes=30, raw_phrase="next Monday"), NOW),
+    )
 
 
 if __name__ == "__main__":

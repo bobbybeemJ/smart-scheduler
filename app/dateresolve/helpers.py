@@ -5,6 +5,7 @@ business-hour clamping) reliable instead of hallucination-prone."""
 from __future__ import annotations
 
 import datetime as dt
+import re
 from typing import Optional
 
 from dateutil import parser as date_parser
@@ -15,6 +16,48 @@ WEEKDAY_NAMES = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturd
 DEFAULT_BUSINESS_START_HOUR = 9
 DEFAULT_BUSINESS_END_HOUR = 17
 DEFAULT_EVENING_END_HOUR = 22
+
+# Deterministic day-part -> (start_hour, end_hour) mapping, checked before falling back to
+# dateparser's fuzzier time inference - keeps "morning"/"afternoon"/"evening" reliable.
+DAY_PART_WINDOWS: dict[str, tuple[int, int]] = {
+    "morning": (9, 12),
+    "afternoon": (12, 17),
+    "evening": (17, 21),
+    "night": (20, 23),
+}
+
+
+def day_part_in_phrase(phrase: str) -> Optional[str]:
+    lowered = phrase.lower()
+    return next((part for part in DAY_PART_WINDOWS if part in lowered), None)
+
+
+def strip_day_part(phrase: str) -> str:
+    day_part = day_part_in_phrase(phrase)
+    if day_part is None:
+        return phrase
+    return re.sub(day_part, "", phrase, flags=re.IGNORECASE).strip()
+
+
+_WEEKDAY_PREFIX_RE = re.compile(r"^(next|this|on|coming)\s+", re.IGNORECASE)
+_TIME_TOKEN_RE = re.compile(r"\b\d{1,2}(:\d{2})?\s*(am|pm)\b|\b\d{1,2}:\d{2}\b", re.IGNORECASE)
+
+
+def try_parse_weekday_only(now: dt.datetime, phrase: str) -> Optional[dt.date]:
+    """Handles "Monday", "next Monday", "this Monday", "on Monday" via our own deterministic
+    weekday arithmetic. dateparser is empirically unreliable on the "next <weekday>" phrasing
+    (observed returning None for it), so bare weekday references never go through dateparser."""
+    candidate = _WEEKDAY_PREFIX_RE.sub("", phrase).strip()
+    try:
+        target_weekday = weekday_index(candidate)
+    except ValueError:
+        return None
+    days_ahead = (target_weekday - now.weekday()) % 7
+    return now.date() + dt.timedelta(days=days_ahead)
+
+
+def phrase_has_explicit_time(phrase: str) -> bool:
+    return bool(_TIME_TOKEN_RE.search(phrase))
 
 
 def weekday_index(name: str) -> int:

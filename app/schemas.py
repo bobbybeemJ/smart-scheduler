@@ -77,6 +77,16 @@ class DynamicBuffer(BaseModel):
     buffer_source: Literal["last_meeting_today"] = "last_meeting_today"
 
 
+class SimpleDateTime(BaseModel):
+    """Not one of the 6 hard cases from the assignment brief, but the most common thing a real
+    user says: "Tuesday at 2pm", "tomorrow morning", "next Monday". `raw_phrase` is resolved by
+    dateparser (deterministic, not the LLM) in the resolver."""
+
+    kind: Literal["simple_datetime"] = "simple_datetime"
+    duration_minutes: int
+    raw_phrase: str
+
+
 TemporalExpression = Union[
     DeadlineBefore,
     EventRelative,
@@ -84,6 +94,7 @@ TemporalExpression = Union[
     RelativeRangeWithExclusions,
     ContextualReference,
     DynamicBuffer,
+    SimpleDateTime,
 ]
 
 
