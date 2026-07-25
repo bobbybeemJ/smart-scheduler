@@ -32,13 +32,29 @@ def _day_bounds_hours(constraints: ResolvedConstraints) -> tuple[int, int]:
     return helpers.time_bounds_for_preference(preference_value)
 
 
+def _round_up_to_granularity(value: dt.datetime, granularity_minutes: int = SLOT_GRANULARITY_MINUTES) -> dt.datetime:
+    """Round up to the next clean boundary (e.g. :00/:30). Two reasons this matters, both found
+    via a real booking + independent-read test: (1) deadline_before's window.start is the raw
+    `now`, seconds and microseconds included - proposing "2:58:34 AM" is bad UX regardless of
+    anything else; (2) Google's API truncates to whole-second precision, so a candidate that
+    still has microseconds silently mismatches on read-back after being written."""
+    epoch_minutes = value.hour * 60 + value.minute
+    remainder = epoch_minutes % granularity_minutes
+    has_subunit_time = value.second > 0 or value.microsecond > 0
+    truncated = value.replace(second=0, microsecond=0)
+    if remainder == 0 and not has_subunit_time:
+        return truncated
+    return truncated + dt.timedelta(minutes=granularity_minutes - remainder)
+
+
 def _iter_candidate_starts(constraints: ResolvedConstraints, window: TimeWindow, duration: dt.timedelta) -> Iterator[dt.datetime]:
     if window.start.date() == window.end.date():
         # Single-day window: these bounds are already exact and intentional (could be an
-        # evening-only dynamic_buffer window, a day-part window, etc.) - no further clamping.
-        cursor = window.start
+        # evening-only dynamic_buffer window, a day-part window, etc.) - no further clamping,
+        # just rounding to a clean boundary (see _round_up_to_granularity).
+        cursor = _round_up_to_granularity(window.start)
         if constraints.earliest_start and constraints.earliest_start > cursor:
-            cursor = constraints.earliest_start
+            cursor = _round_up_to_granularity(constraints.earliest_start)
         while cursor + duration <= window.end:
             yield cursor
             cursor += dt.timedelta(minutes=SLOT_GRANULARITY_MINUTES)
@@ -59,11 +75,11 @@ def _iter_candidate_starts(constraints: ResolvedConstraints, window: TimeWindow,
 
         is_first = current_day == window.start.date()
         is_last = current_day == last_day
-        day_start = window.start if is_first else dt.datetime.combine(current_day, dt.time(hour=floor_hour))
+        day_start = _round_up_to_granularity(window.start) if is_first else dt.datetime.combine(current_day, dt.time(hour=floor_hour))
         day_end = window.end if is_last else dt.datetime.combine(current_day, dt.time(hour=ceiling_hour))
 
         if constraints.earliest_start and constraints.earliest_start.date() == current_day:
-            day_start = max(day_start, constraints.earliest_start)
+            day_start = max(day_start, _round_up_to_granularity(constraints.earliest_start))
 
         cursor = day_start
         while cursor + duration <= day_end:

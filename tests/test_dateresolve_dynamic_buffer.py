@@ -12,6 +12,8 @@ config.settings.use_mock_llm = True
 from app.dateresolve.resolver import resolve  # noqa: E402
 from app.llm.client import extract_intent  # noqa: E402
 from app.schemas import DynamicBuffer  # noqa: E402
+from app.scheduling.ranking import rank_candidates  # noqa: E402
+from app.scheduling.slot_finder import find_available_slots  # noqa: E402
 from tests.fixtures.calendar_fixtures import make_event, make_find_last_meeting  # noqa: E402
 
 NOW = dt.datetime(2026, 7, 22, 9, 0)  # Wednesday
@@ -58,3 +60,29 @@ def test_no_meetings_today_falls_back_to_the_stated_time():
     constraints = resolve(intent, NOW, find_last_meeting=find_last_meeting)
 
     assert constraints.earliest_start == dt.datetime(2026, 7, 22, 19, 0)
+
+
+def test_dynamic_buffer_feeds_correctly_into_slot_finder_and_ranking():
+    """Closes a real coverage gap found when the user asked why coverage wasn't 100%: resolve()
+    for dynamic_buffer was well tested, but no test ever fed that ResolvedConstraints into
+    find_available_slots/rank_candidates together - the earliest_start-based filtering and
+    ranking logic in both those modules was never actually exercised for this scenario."""
+    intent = extract_intent("evening, after 7, but I need an hour to decompress after my last meeting")
+    intent.duration_minutes = 30
+    last_meeting = make_event("running late meeting", dt.datetime(2026, 7, 22, 18, 45), dt.datetime(2026, 7, 22, 18, 45))
+    find_last_meeting = make_find_last_meeting({NOW.date(): last_meeting})
+    constraints = resolve(intent, NOW, find_last_meeting=find_last_meeting)
+
+    def no_busy(start, end):
+        return []
+
+    slots = find_available_slots(constraints, freebusy_fn=no_busy, max_results=50)
+    assert slots, "expected at least one free slot in the evening window"
+    assert all(s.start >= constraints.earliest_start for s in slots), "no slot may start before the buffer-derived floor"
+
+    # Deliberately unordered, with an early (invalid) slot nowhere near earliest_start and a
+    # slot right at earliest_start - ranking must prefer the one closest to earliest_start.
+    closest = min(slots, key=lambda s: s.start)
+    far_slot = max(slots, key=lambda s: s.start)
+    ranked = rank_candidates([far_slot, closest], constraints)
+    assert ranked[0] == closest, "ranking should prefer the slot closest to the computed earliest_start"
