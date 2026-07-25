@@ -8,7 +8,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from app.schemas import ResolvedConstraints, TemporalExpression
+from app.schemas import ResolvedConstraints, TemporalExpression, TimeWindow
 
 Phase = Literal["gathering", "searching", "confirming", "booked"]
 
@@ -19,6 +19,8 @@ class SessionState(BaseModel):
     resolved_constraints: Optional[ResolvedConstraints] = None
     usual_meeting_defaults: dict[str, int] = Field(default_factory=dict)
     phase: Phase = "gathering"
+    top_candidate: Optional[TimeWindow] = None
+    top_candidate_was_widened: bool = False
 
     def condensed_state(self) -> dict:
         """What actually goes to the LLM each turn - small and flat regardless of how many

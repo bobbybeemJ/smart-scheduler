@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from app.schemas import ResolvedConstraints
+from app.schemas import ResolvedConstraints, TimeWindow
 
 
 def _format_dt(value: dt.datetime) -> str:
@@ -35,16 +35,44 @@ def llm_failure() -> list[str]:
     return ["Sorry, I had trouble understanding that.", "Could you say that again?"]
 
 
-def present_search_window(constraints: ResolvedConstraints) -> list[str]:
-    """Placeholder until Phase 7 wires up real freebusy-based slot finding - acknowledges the
-    search window rather than claiming to have found (or booked) an actual free slot."""
-    window = constraints.search_windows[0]
+def duration_updated(new_duration: int) -> list[str]:
+    return [f"Got it, updating this to {new_duration} minutes", "and keeping the day/time preference you already gave me."]
+
+
+def present_available_slot(slot: TimeWindow, duration_minutes: int, was_widened: bool) -> list[str]:
+    """The real answer, replacing Phase 3's placeholder - an actual free slot found via
+    freebusy, ranked by closeness to the stated preference."""
+    lead_in = (
+        "I couldn't find anything in your original window, but I found this a bit further out:"
+        if was_widened
+        else "I found a slot that works:"
+    )
     return [
-        f"Okay, I'll look for a {constraints.duration_minutes}-minute slot",
-        f"between {_format_dt(window.start)} and {_format_dt(window.end)}.",
-        "(Real availability search comes next.)",
+        lead_in,
+        f"{_format_dt(slot.start)}, for {duration_minutes} minutes.",
+        "Should I book it?",
     ]
 
 
-def duration_updated(new_duration: int) -> list[str]:
-    return [f"Got it, updating this to {new_duration} minutes", "and keeping the day/time preference you already gave me."]
+def no_slots_even_after_widening() -> list[str]:
+    return [
+        "I couldn't find anything free, even after widening the search.",
+        "Would you like to try a different duration, or a different day range?",
+    ]
+
+
+def booking_confirmed(slot: TimeWindow) -> list[str]:
+    return [f"Done - booked for {_format_dt(slot.start)}.", "Anything else?"]
+
+
+def nothing_pending_to_confirm() -> list[str]:
+    return ["I don't have a slot pending to confirm.", "What would you like to schedule?"]
+
+
+def calendar_failure() -> list[str]:
+    """Graceful degradation - the Calendar API is unavailable/erroring. Ask a clarifying
+    question instead of crashing or claiming a slot exists that was never actually checked."""
+    return [
+        "I'm having trouble reaching the calendar right now.",
+        "Could you try again in a moment?",
+    ]

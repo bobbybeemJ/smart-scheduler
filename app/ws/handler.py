@@ -25,6 +25,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     manager = DialogueManager(
         find_event=calendar_client.find_event_by_name,
         find_last_meeting=calendar_client.find_last_event_of_day,
+        freebusy_fn=calendar_client.freebusy,
+        insert_event_fn=calendar_client.insert_event,
     )
     audio_buffer = bytearray()
 

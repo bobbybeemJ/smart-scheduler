@@ -31,7 +31,13 @@ def _get_client() -> genai.Client:
 
 def extract_intent(transcript: str, condensed_state: Optional[dict] = None) -> TemporalExpression:
     if settings.use_mock_llm:
-        return mock_responses.get_mock_intent(transcript)
+        try:
+            return mock_responses.get_mock_intent(transcript)
+        except LookupError as exc:
+            # An unmatched mock phrase should degrade the same way a real LLM failure would
+            # (ask again), not crash the turn - found via a test that assumed this was already
+            # true and hit an uncaught LookupError instead.
+            raise LLMExtractionError(f"No mock response for {transcript!r}: {exc}") from exc
 
     try:
         client = _get_client()

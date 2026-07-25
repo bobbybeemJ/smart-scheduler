@@ -14,8 +14,14 @@ from app.dialogue.manager import DialogueManager  # noqa: E402
 NOW = dt.datetime(2026, 7, 22, 9, 0)  # Wednesday
 
 
+def _always_free(start, end):
+    """Fixture freebusy_fn - never hits the real Calendar API, so these tests stay
+    deterministic and don't depend on (or pollute) an actual calendar's real availability."""
+    return []
+
+
 def test_mid_conversation_duration_change_keeps_day_time_context():
-    manager = DialogueManager(now_fn=lambda: NOW)
+    manager = DialogueManager(now_fn=lambda: NOW, freebusy_fn=_always_free)
 
     first_reply = manager.handle_turn("next week, not too early, not on Wednesday")
     assert "how long" in " ".join(first_reply).lower()
@@ -41,14 +47,14 @@ def test_mid_conversation_duration_change_keeps_day_time_context():
 
 
 def test_duration_update_with_no_established_context_asks_instead_of_crashing():
-    manager = DialogueManager(now_fn=lambda: NOW)
+    manager = DialogueManager(now_fn=lambda: NOW, freebusy_fn=_always_free)
     reply = manager.handle_turn("actually we need a full hour now")
     assert manager.state.established_expression is None
     assert "schedule" in " ".join(reply).lower() or "update" in " ".join(reply).lower()
 
 
 def test_contextual_reference_recalls_persisted_duration_without_asking():
-    manager = DialogueManager(now_fn=lambda: NOW)
+    manager = DialogueManager(now_fn=lambda: NOW, freebusy_fn=_always_free)
     manager.state.usual_meeting_defaults["usual sync-up"] = 30
     # establish a day/time constraint first, same as any fresh request would
     manager.handle_turn("next week, not too early, not on Wednesday")
@@ -65,7 +71,7 @@ def test_contextual_reference_recalls_persisted_duration_without_asking():
 
 
 def test_contextual_reference_unknown_asks_and_then_remembers_it():
-    manager = DialogueManager(now_fn=lambda: NOW)
+    manager = DialogueManager(now_fn=lambda: NOW, freebusy_fn=_always_free)
     reply = manager.handle_turn("our usual sync-up")
     assert "long" in " ".join(reply).lower()
     assert manager.pending_contextual_reference == "our usual sync-up"
