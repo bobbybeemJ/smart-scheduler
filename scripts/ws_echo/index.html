@@ -1,0 +1,45 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Phase 0: mic -> websocket -> echo</title></head>
+<body>
+  <h3>Phase 0 sanity check: mic &rarr; websocket &rarr; echo</h3>
+  <button id="startBtn">Start listening</button>
+  <p>Status: <span id="status">idle</span></p>
+  <p>Heard: <span id="heard"></span></p>
+  <p>Echo from server: <span id="echo"></span></p>
+
+  <script>
+    const statusEl = document.getElementById('status');
+    const heardEl = document.getElementById('heard');
+    const echoEl = document.getElementById('echo');
+    const ws = new WebSocket(`ws://${location.host}/ws`);
+
+    ws.onmessage = (event) => { echoEl.textContent = event.data; };
+    ws.onopen = () => { statusEl.textContent = 'websocket connected'; };
+    ws.onerror = () => { statusEl.textContent = 'websocket error'; };
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      statusEl.textContent = 'Web Speech API not supported in this browser (try Chrome/Edge)';
+    } else {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = false;
+      recognition.lang = 'en-US';
+
+      recognition.onresult = (event) => {
+        const text = event.results[event.results.length - 1][0].transcript;
+        heardEl.textContent = text;
+        if (ws.readyState === WebSocket.OPEN) ws.send(text);
+      };
+      recognition.onerror = (e) => { statusEl.textContent = 'recognition error: ' + e.error; };
+      recognition.onend = () => { statusEl.textContent = 'stopped listening'; };
+
+      document.getElementById('startBtn').onclick = () => {
+        recognition.start();
+        statusEl.textContent = 'listening...';
+      };
+    }
+  </script>
+</body>
+</html>

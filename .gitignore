@@ -1,0 +1,14 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.env
+token.json
+client_secret*.json
+*.wav
+*.mp3
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+.DS_Store
