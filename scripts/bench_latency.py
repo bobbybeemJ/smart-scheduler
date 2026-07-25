@@ -44,10 +44,10 @@ def bench_calendar_freebusy() -> float:
         return float("nan")
 
     service = build("calendar", "v3", credentials=creds)
-    now = dt.datetime.utcnow()
+    now = dt.datetime.now(dt.timezone.utc)
     body = {
-        "timeMin": now.isoformat() + "Z",
-        "timeMax": (now + dt.timedelta(hours=1)).isoformat() + "Z",
+        "timeMin": now.isoformat(),
+        "timeMax": (now + dt.timedelta(hours=1)).isoformat(),
         "items": [{"id": "primary"}],
     }
 
@@ -57,16 +57,19 @@ def bench_calendar_freebusy() -> float:
 
 
 def bench_tts_first_byte() -> float:
+    import math
+
     import edge_tts
 
     async def _run():
         voice = os.environ.get("TTS_VOICE", "en-US-AriaNeural")
         communicate = edge_tts.Communicate("This is a latency benchmark sentence.", voice)
         start = time.perf_counter()
+        first_byte_ms = float("nan")
         async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                return (time.perf_counter() - start) * 1000
-        return float("nan")
+            if chunk["type"] == "audio" and math.isnan(first_byte_ms):
+                first_byte_ms = (time.perf_counter() - start) * 1000
+        return first_byte_ms
 
     return asyncio.run(_run())
 
