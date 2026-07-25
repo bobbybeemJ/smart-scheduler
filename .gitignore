@@ -7,6 +7,7 @@ token.json
 client_secret*.json
 *.wav
 *.mp3
+*.webm
 .pytest_cache/
 .coverage
 htmlcov/
