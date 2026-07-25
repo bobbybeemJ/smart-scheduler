@@ -25,6 +25,7 @@ from app.schemas import ContextualReference, DurationUpdate
 from app.scheduling.ranking import rank_candidates
 from app.scheduling.slot_finder import FreebusyFn, find_available_slots_with_fallback
 from app.state import SessionState
+from app.telemetry.timing import Stopwatch, TurnTiming
 
 logger = logging.getLogger(__name__)
 
@@ -67,14 +68,20 @@ class DialogueManager:
         self.insert_event_fn = insert_event_fn or real_insert_event
         self.state = state or SessionState()
         self.pending_contextual_reference: Optional[str] = None
+        self.last_turn_timing: Optional[TurnTiming] = None
 
     def handle_turn(self, transcript: str) -> list[str]:
+        self.last_turn_timing = TurnTiming()
+
         if self.state.phase == "confirming" and _looks_like_confirmation(transcript):
             return self._book_slot()
 
         try:
-            intent = extract_intent(transcript, self.state.condensed_state())
+            with Stopwatch() as sw:
+                intent = extract_intent(transcript, self.state.condensed_state())
+            self.last_turn_timing.llm_ms = sw.elapsed_ms
         except LLMExtractionError:
+            self.last_turn_timing.llm_ms = sw.elapsed_ms
             return templates.llm_failure()
 
         if isinstance(intent, DurationUpdate):
@@ -123,27 +130,35 @@ class DialogueManager:
     def _search_and_reply(self) -> list[str]:
         now = self.now_fn()
         try:
-            constraints = resolve(
-                self.state.established_expression,
-                now,
-                find_event=self.find_event,
-                find_last_meeting=self.find_last_meeting,
-            )
+            with Stopwatch() as sw:
+                constraints = resolve(
+                    self.state.established_expression,
+                    now,
+                    find_event=self.find_event,
+                    find_last_meeting=self.find_last_meeting,
+                )
+            self.last_turn_timing.resolve_ms = sw.elapsed_ms
         except MissingDurationError:
+            self.last_turn_timing.resolve_ms = sw.elapsed_ms
             return templates.ask_duration()
         except UnresolvedReferenceError as exc:
+            self.last_turn_timing.resolve_ms = sw.elapsed_ms
             return templates.could_not_find_reference(str(exc))
         except Exception:
             # Graceful degradation: a real Calendar/network failure inside resolve()'s event
             # lookups should surface as "try again," never a stack trace or a hallucinated time.
+            self.last_turn_timing.resolve_ms = sw.elapsed_ms
             logger.exception("Unexpected failure resolving constraints")
             return templates.calendar_failure()
 
         self.state.resolved_constraints = constraints
 
         try:
-            candidates, was_widened = find_available_slots_with_fallback(constraints, freebusy_fn=self.freebusy_fn)
+            with Stopwatch() as sw:
+                candidates, was_widened = find_available_slots_with_fallback(constraints, freebusy_fn=self.freebusy_fn)
+            self.last_turn_timing.calendar_ms += sw.elapsed_ms
         except Exception:
+            self.last_turn_timing.calendar_ms += sw.elapsed_ms
             logger.exception("Unexpected failure checking calendar availability")
             return templates.calendar_failure()
 
@@ -165,8 +180,11 @@ class DialogueManager:
 
         slot = self.state.top_candidate
         try:
-            self.insert_event_fn("Meeting (scheduled by NxD Smart Scheduler)", slot.start, slot.end)
+            with Stopwatch() as sw:
+                self.insert_event_fn("Meeting (scheduled by NxD Smart Scheduler)", slot.start, slot.end)
+            self.last_turn_timing.calendar_ms += sw.elapsed_ms
         except Exception:
+            self.last_turn_timing.calendar_ms += sw.elapsed_ms
             logger.exception("Unexpected failure booking the event")
             return templates.calendar_failure()
 
