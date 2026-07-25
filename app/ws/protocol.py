@@ -37,6 +37,17 @@ class ReplyClausesMessage(BaseModel):
     clauses: list[str]
 
 
+class AudioClauseMessage(BaseModel):
+    """Server -> client: one clause's synthesized audio, sent as soon as it's ready rather than
+    waiting for every clause to finish (see app/tts/streamer.py). `mime_type` varies because
+    edge-tts produces mp3 while the pyttsx3 fallback produces wav."""
+
+    type: Literal["audio_clause"] = "audio_clause"
+    index: int
+    audio_base64: str
+    mime_type: str
+
+
 class ErrorMessage(BaseModel):
     type: Literal["error"] = "error"
     message: str

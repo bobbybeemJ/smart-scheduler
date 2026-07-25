@@ -53,14 +53,18 @@ async def run_fallback_demo():
         edge_tts_client.synthesize_bytes = original
 
 
-def run_health_check():
+async def run_health_check():
     print("=== Boot-time TTS engine health check ===")
-    result = streamer.check_engine_health()
+    result = await streamer.check_engine_health()
     for engine, healthy in result.items():
         print(f"  {engine}: {'OK' if healthy else 'FAILED'}")
 
 
+async def main():
+    await run_health_check()
+    await run_streaming_demo()
+    await run_fallback_demo()
+
+
 if __name__ == "__main__":
-    run_health_check()
-    asyncio.run(run_streaming_demo())
-    asyncio.run(run_fallback_demo())
+    asyncio.run(main())

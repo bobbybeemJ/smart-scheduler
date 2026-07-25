@@ -1,0 +1,50 @@
+body {
+  font-family: system-ui, sans-serif;
+  max-width: 640px;
+  margin: 2rem auto;
+  padding: 0 1rem;
+}
+
+#micBtn {
+  font-size: 1.1rem;
+  padding: 0.6rem 1.2rem;
+  cursor: pointer;
+}
+
+#micBtn.listening {
+  background: #d33;
+  color: white;
+}
+
+#status {
+  color: #666;
+}
+
+#log {
+  margin-top: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.log-entry {
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  max-width: 85%;
+}
+
+.log-entry.user {
+  align-self: flex-end;
+  background: #dbe9ff;
+}
+
+.log-entry.bot {
+  align-self: flex-start;
+  background: #eee;
+}
+
+.log-entry.error {
+  align-self: flex-start;
+  background: #fdd;
+  color: #900;
+}
