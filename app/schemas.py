@@ -25,7 +25,7 @@ class DeadlineBefore(BaseModel):
     """"45 minutes sometime before my flight Friday at 6 PM" """
 
     kind: Literal["deadline_before"] = "deadline_before"
-    duration_minutes: int
+    duration_minutes: Optional[int] = None
     anchor_weekday: str
     anchor_time: str
     buffer_minutes: int = 0
@@ -35,7 +35,7 @@ class EventRelative(BaseModel):
     """"a 15-minute chat a day or two after the Project Alpha Kick-off event" """
 
     kind: Literal["event_relative"] = "event_relative"
-    duration_minutes: int
+    duration_minutes: Optional[int] = None
     event_name: str
     offset_days_min: int
     offset_days_max: int
@@ -45,7 +45,7 @@ class CalendarArithmetic(BaseModel):
     """"1-hour meeting for the last weekday of this month" """
 
     kind: Literal["calendar_arithmetic"] = "calendar_arithmetic"
-    duration_minutes: int
+    duration_minutes: Optional[int] = None
     expression: CalendarArithmeticExpr
 
 
@@ -53,7 +53,7 @@ class RelativeRangeWithExclusions(BaseModel):
     """"next week, not too early, not on Wednesday" """
 
     kind: Literal["relative_range_with_exclusions"] = "relative_range_with_exclusions"
-    duration_minutes: int
+    duration_minutes: Optional[int] = None
     range: Literal["next_week", "this_week"] = "next_week"
     exclude_weekdays: list[str] = Field(default_factory=list)
     time_preference: Optional[TimePreference] = None
@@ -71,7 +71,7 @@ class DynamicBuffer(BaseModel):
     """"evening, after 7, but I need an hour to decompress after my last meeting" """
 
     kind: Literal["dynamic_buffer"] = "dynamic_buffer"
-    duration_minutes: int
+    duration_minutes: Optional[int] = None
     after_time: str
     buffer_minutes: int
     buffer_source: Literal["last_meeting_today"] = "last_meeting_today"
@@ -83,7 +83,7 @@ class SimpleDateTime(BaseModel):
     dateparser (deterministic, not the LLM) in the resolver."""
 
     kind: Literal["simple_datetime"] = "simple_datetime"
-    duration_minutes: int
+    duration_minutes: Optional[int] = None
     raw_phrase: str
 
 

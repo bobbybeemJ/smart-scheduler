@@ -34,12 +34,24 @@ class UnresolvedReferenceError(Exception):
     (Phase 3) should turn this into a clarifying question, never a crash or a guessed date."""
 
 
+class MissingDurationError(Exception):
+    """Raised when duration_minutes wasn't stated (and hasn't been filled in from session state
+    yet). This is what turns "info is missing" into a clarifying question upstream, instead of
+    the LLM inventing a plausible-looking default - confirmed via a real Gemini call that it will
+    otherwise guess a duration (e.g. 30) out of nowhere when the schema forces a non-null int."""
+
+
 def resolve(
     expr: TemporalExpression,
     now: dt.datetime,
     find_event: Optional[CalendarLookupFn] = None,
     find_last_meeting: Optional[LastMeetingLookupFn] = None,
 ) -> ResolvedConstraints:
+    if not isinstance(expr, ContextualReference) and getattr(expr, "duration_minutes", None) is None:
+        raise MissingDurationError(
+            "duration_minutes is not known yet - ask the user how long the meeting should be "
+            "before calling resolve()."
+        )
     if isinstance(expr, DeadlineBefore):
         return _resolve_deadline_before(expr, now)
     if isinstance(expr, EventRelative):
