@@ -72,3 +72,21 @@ def test_late_next_week_narrows_days_not_hours():
     window = constraints.search_windows[0]
     assert window.start.date() == dt.date(2026, 7, 30)  # Thursday, not Monday
     assert window.end.date() == dt.date(2026, 7, 31)  # Friday
+
+
+def test_this_week_range_was_accepted_by_the_schema_but_never_implemented():
+    """Found by testing a brand-new phrase against the live deployed service: real Gemini
+    extracted "sometime this week, not on Monday" perfectly (range="this_week",
+    exclude_weekdays=["Monday"]), but resolve() raised "Unhandled range: this_week" - the
+    schema always accepted this_week as a valid value, but the resolver only ever implemented
+    next_week. Also checks the window starts at `now`, not a generic 9am, since "this week" can
+    start partway through today - a candidate slot must never be proposed in the past."""
+    intent = RelativeRangeWithExclusions(duration_minutes=30, range="this_week", exclude_weekdays=["Monday"])
+    now = dt.datetime(2026, 7, 22, 14, 0)  # Wednesday, 2pm
+
+    constraints = resolve(intent, now)
+
+    window = constraints.search_windows[0]
+    assert window.start == now  # clamped to now, not a past 9am
+    assert window.end.date() == dt.date(2026, 7, 24)  # this Friday
+    assert constraints.excluded_weekdays == [0]  # Monday

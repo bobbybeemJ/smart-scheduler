@@ -117,6 +117,20 @@ def next_week_range(now: dt.datetime) -> tuple[dt.date, dt.date]:
     return next_monday, next_friday
 
 
+def this_week_range(now: dt.datetime) -> tuple[dt.date, dt.date]:
+    """This calendar week's remaining weekdays: from today through Friday. Found missing (the
+    schema accepted "this_week" as a valid value, but the resolver only ever implemented
+    "next_week") via testing a real "sometime this week" phrase against the live deployed
+    service - real Gemini extracted it perfectly, but resolving it failed. If today is already
+    Saturday/Sunday, returns a same-day no-op range that legitimately yields zero candidates,
+    which slot_finder's widen-on-empty fallback already handles gracefully."""
+    today = now.date()
+    if now.weekday() > 4:  # Saturday=5, Sunday=6 - no weekdays left this week
+        return today, today
+    this_friday = today + dt.timedelta(days=4 - now.weekday())
+    return today, this_friday
+
+
 def time_bounds_for_preference(preference: Optional[str]) -> tuple[int, int]:
     """(earliest_hour, latest_hour) floor/ceiling for a stated vague preference."""
     if preference == "not_too_early":

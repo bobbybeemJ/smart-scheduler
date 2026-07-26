@@ -128,10 +128,13 @@ def _resolve_calendar_arithmetic(expr: CalendarArithmetic, now: dt.datetime) -> 
 
 
 def _resolve_relative_range(expr: RelativeRangeWithExclusions, now: dt.datetime) -> ResolvedConstraints:
-    if expr.range != "next_week":
+    if expr.range == "next_week":
+        start_date, end_date = helpers.next_week_range(now)
+    elif expr.range == "this_week":
+        start_date, end_date = helpers.this_week_range(now)
+    else:
         raise ValueError(f"Unhandled range: {expr.range}")
 
-    start_date, end_date = helpers.next_week_range(now)
     if expr.week_position == WeekPosition.LATE_IN_RANGE:
         start_date = max(start_date, end_date - dt.timedelta(days=1))  # Thu-Fri
     elif expr.week_position == WeekPosition.EARLY_IN_RANGE:
@@ -140,6 +143,9 @@ def _resolve_relative_range(expr: RelativeRangeWithExclusions, now: dt.datetime)
     preference_value = expr.time_preference.value if expr.time_preference else None
     earliest_hour, latest_hour = helpers.time_bounds_for_preference(preference_value)
     start = dt.datetime.combine(start_date, dt.time(hour=earliest_hour))
+    if start_date == now.date():
+        # "this week" can start today - never propose a candidate window starting in the past.
+        start = max(start, now)
     end = dt.datetime.combine(end_date, dt.time(hour=latest_hour))
     excluded = [helpers.weekday_index(day_name) for day_name in expr.exclude_weekdays]
 
