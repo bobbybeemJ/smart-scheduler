@@ -47,7 +47,7 @@ def main():
 
     # 2. next_week, not_too_early: floor=10, ceiling=18 should apply to EVERY day, not just Mon/Fri.
     constraints2 = resolve(
-        RelativeRangeWithExclusions(duration_minutes=30, range="next_week", exclude_weekdays=["Wednesday"], time_preference=TimePreference.NOT_TOO_EARLY),
+        RelativeRangeWithExclusions(duration_minutes=30, week_offset=1, exclude_weekdays=["Wednesday"], time_preference=TimePreference.NOT_TOO_EARLY),
         NOW,
     )
     slots2 = find_available_slots(constraints2, freebusy_fn=no_busy, max_results=100)

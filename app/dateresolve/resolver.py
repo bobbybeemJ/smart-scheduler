@@ -43,6 +43,16 @@ class MissingDurationError(Exception):
     otherwise guess a duration (e.g. 30) out of nowhere when the schema forces a non-null int."""
 
 
+class PastDateError(Exception):
+    """Raised when a resolved search window is entirely in the past. Found via testing "last
+    week" and "yesterday" against real Gemini: both extracted cleanly, and both resolved to a
+    genuine past datetime with NO error at all - deadline_before/event_relative/etc. never
+    checked whether "now" or "event end + offset" could land before "now". This check is
+    deliberately centralized here in resolve() rather than duplicated in every _resolve_*
+    function, so it protects every current and future case uniformly with one guard, not one
+    per case."""
+
+
 def resolve(
     expr: TemporalExpression,
     now: dt.datetime,
@@ -54,6 +64,24 @@ def resolve(
             "duration_minutes is not known yet - ask the user how long the meeting should be "
             "before calling resolve()."
         )
+
+    constraints = _dispatch(expr, now, find_event, find_last_meeting)
+
+    if all(window.end <= now for window in constraints.search_windows):
+        raise PastDateError(
+            f"Resolved search window(s) are entirely in the past relative to now ({now}): "
+            f"{constraints.search_windows} - can't schedule a new meeting in the past."
+        )
+
+    return constraints
+
+
+def _dispatch(
+    expr: TemporalExpression,
+    now: dt.datetime,
+    find_event: Optional[CalendarLookupFn],
+    find_last_meeting: Optional[LastMeetingLookupFn],
+) -> ResolvedConstraints:
     if isinstance(expr, DeadlineBefore):
         return _resolve_deadline_before(expr, now)
     if isinstance(expr, EventRelative):
@@ -128,12 +156,7 @@ def _resolve_calendar_arithmetic(expr: CalendarArithmetic, now: dt.datetime) -> 
 
 
 def _resolve_relative_range(expr: RelativeRangeWithExclusions, now: dt.datetime) -> ResolvedConstraints:
-    if expr.range == "next_week":
-        start_date, end_date = helpers.next_week_range(now)
-    elif expr.range == "this_week":
-        start_date, end_date = helpers.this_week_range(now)
-    else:
-        raise ValueError(f"Unhandled range: {expr.range}")
+    start_date, end_date = helpers.week_range(now, expr.week_offset)
 
     if expr.week_position == WeekPosition.LATE_IN_RANGE:
         start_date = max(start_date, end_date - dt.timedelta(days=1))  # Thu-Fri

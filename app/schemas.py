@@ -65,11 +65,22 @@ class CalendarArithmetic(BaseModel):
 class RelativeRangeWithExclusions(BaseModel):
     """"next week, not too early, not on Wednesday" - also covers "sometime late next week"
     via week_position (which days of the range) as distinct from time_preference (which hours
-    within a day)."""
+    within a day).
+
+    week_offset is a signed integer relative to the CURRENT calendar week: 0 = this week,
+    1 = next week, 2 = the week after next / "two weeks from now", -1 = last week, etc. This
+    replaced a two-value range: Literal["this_week", "next_week"] enum after real testing showed
+    Gemini would simply abandon this schema entirely for anything slightly different ("the week
+    after next", "two weeks from now") and fall back to SimpleDateTime instead - silently
+    dropping exclude_weekdays/time_preference/week_position in the process, since SimpleDateTime
+    has none of those fields. A signed integer lets the LLM express any week offset uniformly.
+    Negative values are still accepted here (extraction should reflect what the user actually
+    said) - resolver.py's resolve() rejects an entirely-past result for ANY case, not just this
+    one, so "last week" is caught centrally rather than needing per-case validation."""
 
     kind: Literal["relative_range_with_exclusions"] = "relative_range_with_exclusions"
     duration_minutes: Optional[int] = None
-    range: Literal["next_week", "this_week"] = "next_week"
+    week_offset: int = 1
     exclude_weekdays: list[str] = Field(default_factory=list)
     time_preference: Optional[TimePreference] = None
     week_position: Optional[WeekPosition] = None

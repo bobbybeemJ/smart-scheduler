@@ -31,6 +31,14 @@ def could_not_find_reference(detail: str) -> list[str]:
     return [f"I couldn't find that - {detail}.", "Could you tell me more, or pick a different reference?"]
 
 
+def cannot_schedule_in_the_past() -> list[str]:
+    """Distinct from calendar_failure() - this isn't a Calendar API problem, it's a request that
+    doesn't make sense ("last week," "yesterday"). Found via testing real Gemini: both extracted
+    cleanly and both silently resolved to a genuine past datetime before resolve() had any check
+    for this at all."""
+    return ["I can only help schedule something in the future.", "Did you mean next week, or a different day?"]
+
+
 def llm_failure() -> list[str]:
     return ["Sorry, I had trouble understanding that.", "Could you say that again?"]
 

@@ -109,26 +109,32 @@ def business_hours_window(
     return start, end
 
 
-def next_week_range(now: dt.datetime) -> tuple[dt.date, dt.date]:
-    """Next calendar week's Monday..Friday, relative to `now`."""
-    days_until_monday = (7 - now.weekday()) % 7 or 7
-    next_monday = (now + dt.timedelta(days=days_until_monday)).date()
-    next_friday = next_monday + dt.timedelta(days=4)
-    return next_monday, next_friday
+def week_range(now: dt.datetime, offset: int) -> tuple[dt.date, dt.date]:
+    """The Monday..Friday of the calendar week `offset` weeks from now's current week:
+    0 = this week, 1 = next week, 2 = the week after next / "two weeks from now", -1 = last
+    week, etc. Replaced separate next_week_range()/this_week_range() functions with one signed-
+    offset version - found via testing that Gemini kept abandoning a two-value
+    Literal["this_week","next_week"] enum for anything slightly different ("the week after
+    next") and silently falling back to a weaker catch-all case instead, losing
+    exclude_weekdays/time_preference in the process.
 
+    When offset == 0 and today is a weekday, the range starts today (not Monday) since a
+    candidate can never be proposed in the past; if today is already Sat/Sun for offset == 0,
+    returns a same-day no-op range (yields zero candidates, which slot_finder's widen-on-empty
+    fallback handles gracefully). Negative offsets (past weeks) are intentionally still computed
+    here rather than rejected - resolve()'s universal past-date safety net rejects an
+    entirely-past result centrally for every case, not just this one, so this function stays a
+    plain, honest calculation."""
+    this_monday = now.date() - dt.timedelta(days=now.weekday())
+    target_monday = this_monday + dt.timedelta(weeks=offset)
+    target_friday = target_monday + dt.timedelta(days=4)
 
-def this_week_range(now: dt.datetime) -> tuple[dt.date, dt.date]:
-    """This calendar week's remaining weekdays: from today through Friday. Found missing (the
-    schema accepted "this_week" as a valid value, but the resolver only ever implemented
-    "next_week") via testing a real "sometime this week" phrase against the live deployed
-    service - real Gemini extracted it perfectly, but resolving it failed. If today is already
-    Saturday/Sunday, returns a same-day no-op range that legitimately yields zero candidates,
-    which slot_finder's widen-on-empty fallback already handles gracefully."""
-    today = now.date()
-    if now.weekday() > 4:  # Saturday=5, Sunday=6 - no weekdays left this week
-        return today, today
-    this_friday = today + dt.timedelta(days=4 - now.weekday())
-    return today, this_friday
+    if offset == 0:
+        if now.weekday() > 4:  # Saturday=5, Sunday=6 - no weekdays left this week
+            return now.date(), now.date()
+        return now.date(), target_friday
+
+    return target_monday, target_friday
 
 
 def time_bounds_for_preference(preference: Optional[str]) -> tuple[int, int]:

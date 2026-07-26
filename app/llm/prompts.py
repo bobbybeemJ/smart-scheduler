@@ -39,6 +39,14 @@ DAYS of the range to favor (start of next week vs end of next week). "sometime l
 means week_position="late_in_range" - it says nothing about what hour of the day, so leave \
 time_preference null. "not too early in the morning" means time_preference="not_too_early" and \
 says nothing about which days, so leave week_position null. A phrase can set both, one, or neither.
+7. "relative_range_with_exclusions" also has week_offset: a signed integer counting calendar \
+weeks from the CURRENT week. 0 = "this week", 1 = "next week", 2 = "the week after next" / "two \
+weeks from now" / "in two weeks", 3 = "in three weeks", and so on. Use this field for ANY \
+"[in/this/next] N week(s)" phrasing, however it's worded - do not fall back to a different \
+schema kind just because the phrase isn't exactly "this week" or "next week". If the user refers \
+to a week that has already passed (e.g. "last week", week_offset would be negative), still \
+extract it honestly as the negative number they meant - it is not your job to judge whether a \
+past date makes sense for scheduling; leave that entirely to the Python system that resolves it.
 """
 
 

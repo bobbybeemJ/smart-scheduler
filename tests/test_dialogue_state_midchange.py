@@ -35,7 +35,7 @@ def test_mid_conversation_duration_change_keeps_day_time_context():
     assert manager.state.established_expression.duration_minutes == 60
     # day/time context from turn 1 must be untouched
     assert manager.state.established_expression.exclude_weekdays == ["Wednesday"]
-    assert manager.state.established_expression.range == "next_week"
+    assert manager.state.established_expression.week_offset == 1
     assert manager.state.established_expression.time_preference == established_before.time_preference
 
     constraints = manager.state.resolved_constraints

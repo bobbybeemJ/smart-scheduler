@@ -17,7 +17,7 @@ NOW = dt.datetime(2026, 7, 22, 9, 0)  # Wednesday
 def test_vague_multiconstraint_extracted_correctly_from_mock_llm():
     intent = extract_intent("next week, not too early, not on Wednesday")
     assert isinstance(intent, RelativeRangeWithExclusions)
-    assert intent.range == "next_week"
+    assert intent.week_offset == 1
     assert intent.exclude_weekdays == ["Wednesday"]
     assert intent.time_preference == TimePreference.NOT_TOO_EARLY
     # Duration wasn't stated in this phrase - must stay None, not a guessed default
@@ -76,12 +76,12 @@ def test_late_next_week_narrows_days_not_hours():
 
 def test_this_week_range_was_accepted_by_the_schema_but_never_implemented():
     """Found by testing a brand-new phrase against the live deployed service: real Gemini
-    extracted "sometime this week, not on Monday" perfectly (range="this_week",
-    exclude_weekdays=["Monday"]), but resolve() raised "Unhandled range: this_week" - the
-    schema always accepted this_week as a valid value, but the resolver only ever implemented
+    extracted "sometime this week, not on Monday" perfectly (week_offset=0,
+    exclude_weekdays=["Monday"]), but resolve() raised "Unhandled range: this_week" back when
+    this field was a two-value Literal["this_week","next_week"] enum that only ever implemented
     next_week. Also checks the window starts at `now`, not a generic 9am, since "this week" can
     start partway through today - a candidate slot must never be proposed in the past."""
-    intent = RelativeRangeWithExclusions(duration_minutes=30, range="this_week", exclude_weekdays=["Monday"])
+    intent = RelativeRangeWithExclusions(duration_minutes=30, week_offset=0, exclude_weekdays=["Monday"])
     now = dt.datetime(2026, 7, 22, 14, 0)  # Wednesday, 2pm
 
     constraints = resolve(intent, now)
@@ -90,3 +90,30 @@ def test_this_week_range_was_accepted_by_the_schema_but_never_implemented():
     assert window.start == now  # clamped to now, not a past 9am
     assert window.end.date() == dt.date(2026, 7, 24)  # this Friday
     assert constraints.excluded_weekdays == [0]  # Monday
+
+
+def test_week_offset_two_weeks_out_was_previously_unreachable():
+    """Real Gemini would abandon this schema entirely for "two weeks from now" (no way to
+    express it under the old this_week/next_week enum) and fall back to SimpleDateTime instead,
+    silently losing exclude_weekdays in the process. week_offset=2 covers it directly now."""
+    intent = RelativeRangeWithExclusions(duration_minutes=30, week_offset=2, exclude_weekdays=["Friday"])
+    constraints = resolve(intent, NOW)
+
+    window = constraints.search_windows[0]
+    assert window.start.date() == dt.date(2026, 8, 3)  # Monday, two weeks from NOW's week
+    assert window.end.date() == dt.date(2026, 8, 7)  # Friday
+    assert constraints.excluded_weekdays == [4]  # Friday
+
+
+def test_negative_week_offset_is_rejected_as_a_past_date_not_silently_resolved():
+    """The real bug this whole fix was prompted by: "last week" used to resolve to a genuine
+    past datetime with NO error at all. week_offset=-1 must be rejected centrally by resolve()'s
+    universal past-date safety net, not silently return a bygone window."""
+    from app.dateresolve.resolver import PastDateError
+
+    intent = RelativeRangeWithExclusions(duration_minutes=30, week_offset=-1)
+    try:
+        resolve(intent, NOW)
+        assert False, "expected PastDateError for a negative week_offset"
+    except PastDateError:
+        pass

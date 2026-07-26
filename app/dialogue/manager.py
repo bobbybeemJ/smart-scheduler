@@ -16,6 +16,7 @@ from app.dateresolve.resolver import (
     CalendarLookupFn,
     LastMeetingLookupFn,
     MissingDurationError,
+    PastDateError,
     UnresolvedReferenceError,
     resolve,
     resolve_contextual_duration,
@@ -229,6 +230,13 @@ class DialogueManager:
                 # reference - that wording belongs to actual named-event lookups instead.
                 return templates.ask_day_time_preference()
             return templates.could_not_find_reference(str(exc))
+        except PastDateError:
+            # Distinct from the generic calendar_failure() catch-all below - this is not a
+            # Calendar API problem, it's a nonsensical request ("last week"). Found via testing
+            # real Gemini on "last week"/"yesterday", both of which resolved to a genuine past
+            # datetime with no error at all before this check existed.
+            self.last_turn_timing.resolve_ms = sw.elapsed_ms
+            return templates.cannot_schedule_in_the_past()
         except Exception:
             # Graceful degradation: a real Calendar/network failure inside resolve()'s event
             # lookups should surface as "try again," never a stack trace or a hallucinated time.

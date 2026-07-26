@@ -101,6 +101,19 @@ def test_calendar_failure_during_search_degrades_gracefully():
     assert manager.state.phase != "confirming"
 
 
+def test_past_week_offset_degrades_to_clarifying_reply_not_calendar_failure():
+    """A negative week_offset ("last week") must hit the distinct PastDateError path in
+    manager.py, not fall through to the generic calendar_failure() catch-all - the two wordings
+    are different (see templates.cannot_schedule_in_the_past vs calendar_failure) and mean
+    different things to the user."""
+    manager = DialogueManager(now_fn=lambda: NOW, freebusy_fn=_always_free)
+    reply = manager.handle_turn("a 30 minute meeting last week")
+
+    reply_text = " ".join(reply).lower()
+    assert "future" in reply_text
+    assert manager.state.phase != "confirming"
+
+
 def test_calendar_failure_during_booking_degrades_gracefully():
     def _raises(summary, start, end):
         raise RuntimeError("simulated Calendar API outage during insert")

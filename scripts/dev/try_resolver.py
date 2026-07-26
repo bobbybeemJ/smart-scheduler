@@ -71,7 +71,7 @@ def main() -> None:
         resolve(
             RelativeRangeWithExclusions(
                 duration_minutes=30,
-                range="next_week",
+                week_offset=1,
                 exclude_weekdays=["Wednesday"],
                 time_preference=TimePreference.NOT_TOO_EARLY,
             ),

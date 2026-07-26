@@ -45,7 +45,7 @@ _CANNED_RESPONSES: list[tuple[str, dict]] = [
         {
             "kind": "relative_range_with_exclusions",
             "duration_minutes": None,
-            "range": "next_week",
+            "week_offset": 1,
             "exclude_weekdays": ["Wednesday"],
             "time_preference": "not_too_early",
         },
@@ -55,8 +55,16 @@ _CANNED_RESPONSES: list[tuple[str, dict]] = [
         {
             "kind": "relative_range_with_exclusions",
             "duration_minutes": None,
-            "range": "next_week",
+            "week_offset": 1,
             "week_position": "late_in_range",
+        },
+    ),
+    (
+        "last week",
+        {
+            "kind": "relative_range_with_exclusions",
+            "duration_minutes": 30,
+            "week_offset": -1,
         },
     ),
     (
