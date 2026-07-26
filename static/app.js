@@ -1,8 +1,17 @@
 const statusEl = document.getElementById("status");
+const statusPill = document.getElementById("statusPill");
 const micBtn = document.getElementById("micBtn");
+const micHint = document.getElementById("micHint");
 const logEl = document.getElementById("log");
+const emptyState = document.getElementById("emptyState");
+
+function setStatus(text, state) {
+  statusEl.textContent = text;
+  statusPill.dataset.state = state;
+}
 
 function logEntry(text, cls) {
+  if (emptyState) emptyState.remove();
   const div = document.createElement("div");
   div.className = `log-entry ${cls}`;
   div.textContent = text;
@@ -11,17 +20,21 @@ function logEntry(text, cls) {
 }
 
 // --- Websocket ---
-const ws = new WebSocket(`ws://${location.host}/ws`);
+const usingFallback = !(window.SpeechRecognition || window.webkitSpeechRecognition);
+const wsProtocol = location.protocol === "https:" ? "wss:" : "ws:";
+const ws = new WebSocket(`${wsProtocol}//${location.host}/ws`);
 ws.onopen = () => {
-  statusEl.textContent = "connected";
+  setStatus("Connected", "connected");
   micBtn.disabled = false;
+  if (!usingFallback) micHint.textContent = "Tap the mic to start speaking";
 };
 ws.onerror = () => {
-  statusEl.textContent = "websocket error";
+  setStatus("Connection error", "error");
 };
 ws.onclose = () => {
-  statusEl.textContent = "disconnected";
+  setStatus("Disconnected", "disconnected");
   micBtn.disabled = true;
+  micHint.textContent = "Reconnect by reloading the page";
 };
 ws.onmessage = (event) => {
   const msg = JSON.parse(event.data);
@@ -72,12 +85,12 @@ function sendTranscript(text, source) {
 
 function setListening(value) {
   listening = value;
-  micBtn.textContent = value ? "Listening... (click to stop)" : "Start speaking";
+  micHint.textContent = value ? "Listening… tap again to stop" : "Tap the mic to start speaking";
   micBtn.classList.toggle("listening", value);
+  micBtn.setAttribute("aria-label", value ? "Stop speaking" : "Start speaking");
 }
 
 if (SpeechRecognition) {
-  statusEl.textContent = "connected (Web Speech API)";
   recognition = new SpeechRecognition();
   recognition.continuous = false;
   recognition.interimResults = false;
@@ -99,7 +112,7 @@ if (SpeechRecognition) {
     }
   };
 } else {
-  statusEl.textContent = "connected (Web Speech API unavailable - using recorder fallback)";
+  micHint.textContent = "Web Speech API unavailable — using recorder fallback";
 
   micBtn.onclick = async () => {
     if (!listening) {
