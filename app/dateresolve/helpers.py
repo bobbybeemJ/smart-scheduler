@@ -90,13 +90,28 @@ def next_occurrence(now: dt.datetime, weekday_name: str, time_str: str) -> dt.da
     return candidate
 
 
-def last_weekday_of_month(reference: dt.datetime) -> dt.date:
-    """Last Mon-Fri day of `reference`'s month (walks back from the last calendar day)."""
-    first_of_next_month = (reference.replace(day=1) + relativedelta(months=1)).date()
+def last_weekday_of_month(reference: dt.datetime, month_offset: int = 0) -> dt.date:
+    """Last Mon-Fri day of the month `month_offset` months from `reference`'s month (walks back
+    from the last calendar day). 0 = reference's own month, 1 = next month, etc. - mirrors
+    week_range()'s signed-offset design."""
+    target_month_start = (reference.replace(day=1) + relativedelta(months=month_offset)).date()
+    first_of_next_month = target_month_start + relativedelta(months=1)
     last_day = first_of_next_month - dt.timedelta(days=1)
     while last_day.weekday() >= 5:  # Saturday=5, Sunday=6
         last_day -= dt.timedelta(days=1)
     return last_day
+
+
+def first_weekday_of_month(reference: dt.datetime, month_offset: int = 0) -> dt.date:
+    """First Mon-Fri day of the month `month_offset` months from `reference`'s month (walks
+    forward from the 1st). Mirrors last_weekday_of_month(); added after testing real Gemini
+    showed asking for "the first weekday of next month" against a schema that only had
+    LAST_WEEKDAY_OF_MONTH silently returned the wrong (last-weekday) answer instead of failing."""
+    target_month_start = (reference.replace(day=1) + relativedelta(months=month_offset)).date()
+    first_day = target_month_start
+    while first_day.weekday() >= 5:  # Saturday=5, Sunday=6
+        first_day += dt.timedelta(days=1)
+    return first_day
 
 
 def business_hours_window(

@@ -38,6 +38,8 @@ class SessionState(BaseModel):
             "established_constraint": (
                 self.established_expression.model_dump(mode="json") if self.established_expression else None
             ),
+            "phase": self.phase,
+            "num_offered_candidates": len(self.top_candidates),
         }
 
     def remember_usual_meeting(self, reference_key: str, duration_minutes: int) -> None:

@@ -29,7 +29,20 @@ def _day_bounds_hours(constraints: ResolvedConstraints) -> tuple[int, int]:
     "next week" search. Derived from the stated time_preference so "not too early" applies
     uniformly across every day in the range, not just the first/last."""
     preference_value = constraints.time_preference.value if constraints.time_preference else None
-    return helpers.time_bounds_for_preference(preference_value)
+    floor_hour, ceiling_hour = helpers.time_bounds_for_preference(preference_value)
+    if constraints.earliest_hour is not None:
+        floor_hour = max(floor_hour, constraints.earliest_hour)
+    return floor_hour, ceiling_hour
+
+
+def _apply_earliest_hour(day: dt.date, day_start: dt.datetime, constraints: ResolvedConstraints) -> dt.datetime:
+    """earliest_hour (event_relative/deadline_before's "not before 11am") is a floor on EVERY
+    day the window touches, unlike earliest_start (dynamic_buffer's single-date "today only,
+    after my last meeting" anchor) - so first/last days need this applied too, not just the
+    middle days that already go through _day_bounds_hours."""
+    if constraints.earliest_hour is None:
+        return day_start
+    return max(day_start, dt.datetime.combine(day, dt.time(hour=constraints.earliest_hour)))
 
 
 def _round_up_to_granularity(value: dt.datetime, granularity_minutes: int = SLOT_GRANULARITY_MINUTES) -> dt.datetime:
@@ -53,6 +66,7 @@ def _iter_candidate_starts(constraints: ResolvedConstraints, window: TimeWindow,
         # evening-only dynamic_buffer window, a day-part window, etc.) - no further clamping,
         # just rounding to a clean boundary (see _round_up_to_granularity).
         cursor = _round_up_to_granularity(window.start)
+        cursor = _apply_earliest_hour(window.start.date(), cursor, constraints)
         if constraints.earliest_start and constraints.earliest_start > cursor:
             cursor = _round_up_to_granularity(constraints.earliest_start)
         while cursor + duration <= window.end:
@@ -76,6 +90,7 @@ def _iter_candidate_starts(constraints: ResolvedConstraints, window: TimeWindow,
         is_first = current_day == window.start.date()
         is_last = current_day == last_day
         day_start = _round_up_to_granularity(window.start) if is_first else dt.datetime.combine(current_day, dt.time(hour=floor_hour))
+        day_start = _apply_earliest_hour(current_day, day_start, constraints)
         day_end = window.end if is_last else dt.datetime.combine(current_day, dt.time(hour=ceiling_hour))
 
         if constraints.earliest_start and constraints.earliest_start.date() == current_day:

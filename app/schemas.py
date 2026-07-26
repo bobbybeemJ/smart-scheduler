@@ -31,7 +31,18 @@ class WeekPosition(str, Enum):
 
 
 class CalendarArithmeticExpr(str, Enum):
+    """Found via testing real Gemini: with only LAST_WEEKDAY_OF_MONTH available, asking for "the
+    FIRST weekday of next month" didn't fail or fall back gracefully - the model just forced the
+    only enum value it had, silently returning last_weekday_of_month for a request that
+    explicitly said "first." That's worse than a dropped field: confidently wrong output with no
+    error at all. FIRST_WEEKDAY_OF_MONTH closes that specific hole. (Arbitrary "Nth weekday of
+    month," e.g. "the second Tuesday," is a deliberately separate, unimplemented case - the
+    assignment brief's own example is only ever "last weekday of the month," and Nth-weekday-of-
+    month is a materially bigger feature; see SimpleDateTime's dateparser fallback, which handles
+    it approximately but not reliably.)"""
+
     LAST_WEEKDAY_OF_MONTH = "last_weekday_of_month"
+    FIRST_WEEKDAY_OF_MONTH = "first_weekday_of_month"
 
 
 class DeadlineBefore(BaseModel):
@@ -42,6 +53,13 @@ class DeadlineBefore(BaseModel):
     anchor_weekday: str
     anchor_time: str
     buffer_minutes: int = 0
+    earliest_time: Optional[str] = None
+    """"nothing before 9am" - an HH:MM (24h) floor applying to every day the search window
+    touches, not just the anchor day. Found missing via testing real Gemini: this constraint
+    was silently dropped with no error at all before this field existed, identical to the
+    event_relative gap below. Only set this when the user states or clearly implies a literal
+    hour - never invent one for a vague "not too early" (that's a different, unrelated concept:
+    this project doesn't currently support a vague preference on this schema kind)."""
 
 
 class EventRelative(BaseModel):
@@ -52,6 +70,11 @@ class EventRelative(BaseModel):
     event_name: str
     offset_days_min: int
     offset_days_max: int
+    earliest_time: Optional[str] = None
+    """"not before 11am" - an HH:MM (24h) floor applying to every day in the offset window.
+    Found missing via testing real Gemini on exactly this phrase: the constraint was silently
+    dropped with zero error or trace of it in the extracted intent. Only set this when the user
+    states or clearly implies a literal hour."""
 
 
 class CalendarArithmetic(BaseModel):
@@ -60,6 +83,11 @@ class CalendarArithmetic(BaseModel):
     kind: Literal["calendar_arithmetic"] = "calendar_arithmetic"
     duration_minutes: Optional[int] = None
     expression: CalendarArithmeticExpr
+    month_offset: int = 0
+    """Signed integer counting calendar months from the CURRENT month, mirroring
+    RelativeRangeWithExclusions.week_offset. 0 = this month, 1 = next month, etc. Added
+    alongside FIRST_WEEKDAY_OF_MONTH so "the last weekday of next month" doesn't hit the exact
+    same silent-wrong-enum failure mode all over again for the month dimension."""
 
 
 class RelativeRangeWithExclusions(BaseModel):
@@ -125,6 +153,34 @@ class DurationUpdate(BaseModel):
     duration_minutes: int
 
 
+class SlotDecision(BaseModel):
+    """The user is responding to 1-3 candidate slots that were JUST offered (condensed session
+    state shows phase == "confirming" and num_offered_candidates > 0) - only extract this kind
+    in that situation, never otherwise. Backs up dialogue/manager.py's fast local string-
+    matching, which handles the common unambiguous cases ("yes", "the second one") at zero LLM
+    cost without ever reaching you; you're only asked when that matching was ambiguous. Found
+    necessary via testing real Gemini: without this kind, natural phrasings like "yup, sounds
+    good, let's do that" or "let's go with the earlier one" were being misclassified as
+    contextual_reference, derailing the conversation instead of booking or clarifying."""
+
+    kind: Literal["slot_decision"] = "slot_decision"
+    decision: Literal["confirm_top", "select_index", "reject_all"]
+    selected_index: Optional[int] = None
+    """0-based index into the offered candidates - only meaningful (and only ever set) when
+    decision == "select_index"."""
+
+
+class OutOfScope(BaseModel):
+    """The message isn't a scheduling request at all - cancellations, unrelated questions, small
+    talk, anything that isn't "find/book a new meeting slot." Found necessary via testing real
+    Gemini: without an explicit "none of the above" escape hatch, response_schema forces the
+    model to pick some other kind no matter what it's given, so "cancel my 3pm meeting tomorrow"
+    and "what's the weather today" were both silently coerced into fake simple_datetime booking
+    attempts instead of being recognized as outside this assistant's job."""
+
+    kind: Literal["out_of_scope"] = "out_of_scope"
+
+
 TemporalExpression = Union[
     DeadlineBefore,
     EventRelative,
@@ -134,6 +190,8 @@ TemporalExpression = Union[
     DynamicBuffer,
     SimpleDateTime,
     DurationUpdate,
+    SlotDecision,
+    OutOfScope,
 ]
 
 
@@ -150,5 +208,9 @@ class ResolvedConstraints(BaseModel):
     search_windows: list[TimeWindow]
     hard_deadline: Optional[dt.datetime] = None
     earliest_start: Optional[dt.datetime] = None
+    earliest_hour: Optional[int] = None
+    """A literal hour-of-day floor (0-23) applying to EVERY day the search window touches -
+    distinct from earliest_start, which anchors to one specific date (dynamic_buffer's "today
+    only, after my last meeting"). Powers EventRelative/DeadlineBefore's earliest_time field."""
     excluded_weekdays: list[int] = Field(default_factory=list)  # 0=Monday .. 6=Sunday
     time_preference: Optional[TimePreference] = None

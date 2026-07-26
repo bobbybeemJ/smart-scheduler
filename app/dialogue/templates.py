@@ -43,6 +43,17 @@ def llm_failure() -> list[str]:
     return ["Sorry, I had trouble understanding that.", "Could you say that again?"]
 
 
+def out_of_scope() -> list[str]:
+    """Distinct from llm_failure() - the message was understood fine, it just isn't a scheduling
+    request (a cancellation, small talk, an unrelated question). Found via testing real Gemini:
+    without a dedicated reply for this, such messages were silently misread as booking attempts."""
+    return ["I can only help schedule a new meeting slot on your calendar.", "What day, time, and how long would you like it to be?"]
+
+
+def slots_rejected() -> list[str]:
+    return ["Sure, let's try something else.", "What day or time would work better?"]
+
+
 def duration_updated(new_duration: int) -> list[str]:
     return [f"Got it, updating this to {new_duration} minutes", "and keeping the day/time preference you already gave me."]
 

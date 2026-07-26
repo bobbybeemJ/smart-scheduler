@@ -47,6 +47,32 @@ schema kind just because the phrase isn't exactly "this week" or "next week". If
 to a week that has already passed (e.g. "last week", week_offset would be negative), still \
 extract it honestly as the negative number they meant - it is not your job to judge whether a \
 past date makes sense for scheduling; leave that entirely to the Python system that resolves it.
+8. "event_relative" and "deadline_before" both have an optional earliest_time field: an HH:MM \
+(24-hour) floor for phrases like "not before 11am" or "nothing before 9am". Only set it when a \
+literal hour is stated or unambiguously implied - never invent one. Leave it null for vague \
+phrasing like "not too early" (neither schema has a field for that vague version; if a user says \
+something this vague for one of these two kinds, just leave earliest_time null rather than \
+guessing a specific hour).
+9. "calendar_arithmetic" has two expression values now: last_weekday_of_month AND \
+first_weekday_of_month - pick whichever the user actually said ("first" vs "last"). Never default \
+to last_weekday_of_month just because it used to be the only option; if the user said "first," \
+extracting last_weekday_of_month would silently give a completely wrong date with no error at \
+all, which is worse than any other mistake you could make here. It also has month_offset (signed \
+integer, same idea as week_offset above): 0 = this month, 1 = next month, 2 = the month after \
+next, etc.
+10. If 1-3 candidate time slots were JUST offered to the user (the condensed session state's \
+"phase" is "confirming" and "num_offered_candidates" is greater than 0) and the message is the \
+user responding to that offer - confirming, picking one, or rejecting all of them - use \
+"slot_decision", not any date/time-extraction kind. decision is "confirm_top" (accepting \
+whichever was offered, or a clear affirmative with no specific pick), "select_index" (they named \
+a specific one - set selected_index to the 0-based position they meant), or "reject_all" (they \
+don't want any of the offered options). Do not use this kind if "phase" is not "confirming" - a \
+fresh scheduling request always gets its own proper kind instead, even if it superficially sounds \
+like an answer.
+11. If the message isn't a scheduling request at all - cancelling something, small talk, a \
+question unrelated to finding/booking a meeting slot - use "out_of_scope". Do not force it into \
+any other kind just because the schema requires you to pick one; "out_of_scope" exists exactly \
+so you're never stuck doing that.
 """
 
 

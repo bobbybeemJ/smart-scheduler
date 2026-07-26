@@ -120,10 +120,12 @@ def resolve_contextual_duration(expr: ContextualReference, known_defaults: dict[
 def _resolve_deadline_before(expr: DeadlineBefore, now: dt.datetime) -> ResolvedConstraints:
     anchor = helpers.next_occurrence(now, expr.anchor_weekday, expr.anchor_time)
     deadline = anchor - dt.timedelta(minutes=expr.buffer_minutes)
+    earliest_hour = helpers.parse_hhmm(expr.earliest_time)[0] if expr.earliest_time else None
     return ResolvedConstraints(
         duration_minutes=expr.duration_minutes,
         search_windows=[TimeWindow(start=now, end=deadline)],
         hard_deadline=deadline,
+        earliest_hour=earliest_hour,
     )
 
 
@@ -139,18 +141,23 @@ def _resolve_event_relative(expr: EventRelative, find_event: Optional[CalendarLo
     window_end_date = (anchor_end + dt.timedelta(days=expr.offset_days_max)).date()
     start, _ = helpers.business_hours_window(window_start_date)
     _, end = helpers.business_hours_window(window_end_date)
+    earliest_hour = helpers.parse_hhmm(expr.earliest_time)[0] if expr.earliest_time else None
 
     return ResolvedConstraints(
         duration_minutes=expr.duration_minutes,
         search_windows=[TimeWindow(start=start, end=end)],
+        earliest_hour=earliest_hour,
     )
 
 
 def _resolve_calendar_arithmetic(expr: CalendarArithmetic, now: dt.datetime) -> ResolvedConstraints:
-    if expr.expression != CalendarArithmeticExpr.LAST_WEEKDAY_OF_MONTH:
+    if expr.expression == CalendarArithmeticExpr.LAST_WEEKDAY_OF_MONTH:
+        day = helpers.last_weekday_of_month(now, expr.month_offset)
+    elif expr.expression == CalendarArithmeticExpr.FIRST_WEEKDAY_OF_MONTH:
+        day = helpers.first_weekday_of_month(now, expr.month_offset)
+    else:
         raise ValueError(f"Unhandled calendar arithmetic expression: {expr.expression}")
 
-    day = helpers.last_weekday_of_month(now)
     start, end = helpers.business_hours_window(day)
     return ResolvedConstraints(duration_minutes=expr.duration_minutes, search_windows=[TimeWindow(start=start, end=end)])
 

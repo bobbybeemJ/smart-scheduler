@@ -23,7 +23,7 @@ from app.dateresolve.resolver import (
 )
 from app.dialogue import templates
 from app.llm.client import LLMExtractionError, extract_intent
-from app.schemas import ContextualReference, DurationUpdate, SimpleDateTime
+from app.schemas import ContextualReference, DurationUpdate, OutOfScope, SimpleDateTime, SlotDecision
 from app.scheduling.ranking import rank_candidates
 from app.scheduling.slot_finder import FreebusyFn, find_available_slots_with_fallback
 from app.state import SessionState
@@ -149,6 +149,10 @@ class DialogueManager:
             self.last_turn_timing.llm_ms = sw.elapsed_ms
             return templates.llm_failure()
 
+        if isinstance(intent, OutOfScope):
+            return templates.out_of_scope()
+        if isinstance(intent, SlotDecision):
+            return self._handle_slot_decision(intent)
         if isinstance(intent, DurationUpdate):
             return self._handle_duration_update(intent.duration_minutes)
         if isinstance(intent, ContextualReference):
@@ -202,6 +206,27 @@ class DialogueManager:
             return templates.ask_day_time_preference()
         self.state.established_expression.duration_minutes = duration
         return self._search_and_reply()
+
+    def _handle_slot_decision(self, intent: SlotDecision) -> list[str]:
+        """LLM fallback for confirm/select/reject, reached only when handle_turn's fast local
+        string-match (_parse_slot_selection) couldn't classify the message - see SlotDecision's
+        docstring for the real phrasing that broke without this."""
+        if self.state.phase != "confirming" or not self.state.top_candidates:
+            return templates.nothing_pending_to_confirm()
+
+        if intent.decision == "confirm_top":
+            return self._book_slot(0)
+
+        if intent.decision == "select_index":
+            index = intent.selected_index
+            if index is None or index >= len(self.state.top_candidates):
+                return templates.nothing_pending_to_confirm()
+            return self._book_slot(index)
+
+        # reject_all - none of the offered options work; ask what would, rather than guessing.
+        self.state.phase = "searching"
+        self.state.top_candidates = []
+        return templates.slots_rejected()
 
     def _search_and_reply(self) -> list[str]:
         now = self.now_fn()

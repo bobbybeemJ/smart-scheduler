@@ -51,3 +51,47 @@ def test_last_weekday_of_month_is_independent_of_what_day_now_is_within_the_mont
     late_in_month = resolve(intent, dt.datetime(2026, 7, 29, 9, 0))
 
     assert early_in_month.search_windows[0].start.date() == late_in_month.search_windows[0].start.date()
+
+
+def test_first_weekday_of_month_extracted_correctly_from_mock_llm():
+    """Found necessary via testing real Gemini: with only LAST_WEEKDAY_OF_MONTH in the enum,
+    asking for the FIRST weekday of a month didn't fail - it silently forced the only available
+    value and returned last_weekday_of_month instead, a confidently wrong answer with no error."""
+    intent = extract_intent("1-hour meeting for the first weekday of this month")
+    assert isinstance(intent, CalendarArithmetic)
+    assert intent.expression == CalendarArithmeticExpr.FIRST_WEEKDAY_OF_MONTH
+
+
+def test_first_weekday_of_month_when_the_first_calendar_day_is_already_a_weekday():
+    # July 1 2026 is a Wednesday.
+    now = dt.datetime(2026, 7, 1, 9, 0)
+    intent = CalendarArithmetic(duration_minutes=60, expression=CalendarArithmeticExpr.FIRST_WEEKDAY_OF_MONTH)
+    constraints = resolve(intent, now)
+
+    window = constraints.search_windows[0]
+    assert window.start.date() == dt.date(2026, 7, 1)
+    assert window.start.date().weekday() == 2  # Wednesday
+
+
+def test_first_weekday_of_month_walks_forward_from_a_weekend_month_start():
+    # August 2026 starts on Saturday, August 1 - must walk forward to Monday, August 3.
+    now = dt.datetime(2026, 7, 22, 9, 0)
+    intent = CalendarArithmetic(duration_minutes=60, expression=CalendarArithmeticExpr.FIRST_WEEKDAY_OF_MONTH, month_offset=1)
+    constraints = resolve(intent, now)
+
+    window = constraints.search_windows[0]
+    assert window.start.date() == dt.date(2026, 8, 3)
+    assert window.start.date().weekday() == 0  # Monday
+
+
+def test_last_weekday_of_month_with_month_offset_targets_a_different_month():
+    """month_offset (mirroring RelativeRangeWithExclusions.week_offset) generalizes this beyond
+    just "this month" - "the last weekday of next month" needs its own signal distinct from the
+    expression enum, or it hits the exact same silent-wrong-answer failure mode all over again."""
+    now = dt.datetime(2026, 4, 15, 9, 0)
+    intent = CalendarArithmetic(duration_minutes=60, expression=CalendarArithmeticExpr.LAST_WEEKDAY_OF_MONTH, month_offset=1)
+    constraints = resolve(intent, now)
+
+    window = constraints.search_windows[0]
+    assert window.start.date() == dt.date(2026, 5, 29)  # Friday, walked back from Sunday May 31
+    assert window.start.date().weekday() == 4

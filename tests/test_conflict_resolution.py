@@ -114,6 +114,60 @@ def test_past_week_offset_degrades_to_clarifying_reply_not_calendar_failure():
     assert manager.state.phase != "confirming"
 
 
+def test_slot_decision_select_index_via_llm_fallback_when_fast_path_is_ambiguous():
+    """"let's go with the earlier one" isn't in manager.py's hardcoded confirmation/ordinal
+    phrase tables (_CONFIRMATION_PHRASES/_ORDINAL_SELECTORS), so the fast local match returns
+    None and this must fall through to real LLM classification (slot_decision) instead of
+    misfiring into contextual_reference - which is exactly what happened when this phrase was
+    tested directly against real Gemini before slot_decision existed."""
+    manager = DialogueManager(now_fn=lambda: NOW, freebusy_fn=_always_free)
+    manager.handle_turn("Tuesday at 2pm")
+    assert manager.state.phase == "confirming"
+    assert manager.state.top_candidates
+
+    reply = manager.handle_turn("let's go with the earlier one")
+
+    assert manager.state.phase == "booked"
+    reply_text = " ".join(reply).lower()
+    assert "done" in reply_text or "booked" in reply_text
+
+
+def test_slot_decision_confirm_top_via_llm_fallback():
+    manager = DialogueManager(now_fn=lambda: NOW, freebusy_fn=_always_free)
+    manager.handle_turn("Tuesday at 2pm")
+    assert manager.state.phase == "confirming"
+
+    manager.handle_turn("ok let's lock that in")
+
+    assert manager.state.phase == "booked"
+
+
+def test_slot_decision_reject_all_via_llm_fallback_asks_for_a_different_time():
+    manager = DialogueManager(now_fn=lambda: NOW, freebusy_fn=_always_free)
+    manager.handle_turn("Tuesday at 2pm")
+    assert manager.state.phase == "confirming"
+
+    reply = manager.handle_turn("none of those work for me")
+
+    assert manager.state.phase == "searching"
+    assert manager.state.top_candidates == []
+    reply_text = " ".join(reply).lower()
+    assert "something else" in reply_text or "work better" in reply_text
+
+
+def test_out_of_scope_message_gets_a_clarifying_reply_not_a_fake_booking_attempt():
+    """Found via testing real Gemini: without an explicit escape hatch, "cancel my 3pm meeting
+    tomorrow" was silently coerced into a fake simple_datetime booking request (which even went
+    on to ask "how long should this meeting be?") instead of being recognized as outside this
+    assistant's job."""
+    manager = DialogueManager(now_fn=lambda: NOW, freebusy_fn=_always_free)
+    reply = manager.handle_turn("cancel my meeting")
+
+    reply_text = " ".join(reply).lower()
+    assert "schedule" in reply_text
+    assert manager.state.phase != "confirming"
+
+
 def test_calendar_failure_during_booking_degrades_gracefully():
     def _raises(summary, start, end):
         raise RuntimeError("simulated Calendar API outage during insert")

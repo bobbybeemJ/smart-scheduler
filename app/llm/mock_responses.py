@@ -33,11 +33,41 @@ _CANNED_RESPONSES: list[tuple[str, dict]] = [
         },
     ),
     (
+        "not before 11am",
+        {
+            "kind": "event_relative",
+            "duration_minutes": 15,
+            "event_name": "Project Alpha Kick-off",
+            "offset_days_min": 1,
+            "offset_days_max": 2,
+            "earliest_time": "11:00",
+        },
+    ),
+    (
+        "nothing before 9am",
+        {
+            "kind": "deadline_before",
+            "duration_minutes": 20,
+            "anchor_weekday": "Friday",
+            "anchor_time": "18:00",
+            "buffer_minutes": 0,
+            "earliest_time": "09:00",
+        },
+    ),
+    (
         "last weekday",
         {
             "kind": "calendar_arithmetic",
             "duration_minutes": 60,
             "expression": "last_weekday_of_month",
+        },
+    ),
+    (
+        "first weekday",
+        {
+            "kind": "calendar_arithmetic",
+            "duration_minutes": 60,
+            "expression": "first_weekday_of_month",
         },
     ),
     (
@@ -96,6 +126,41 @@ _CANNED_RESPONSES: list[tuple[str, dict]] = [
         {
             "kind": "duration_update",
             "duration_minutes": 60,
+        },
+    ),
+    (
+        "sounds good, let's do that",
+        {
+            "kind": "slot_decision",
+            "decision": "confirm_top",
+        },
+    ),
+    (
+        "lock that in",
+        {
+            "kind": "slot_decision",
+            "decision": "confirm_top",
+        },
+    ),
+    (
+        "the earlier one",
+        {
+            "kind": "slot_decision",
+            "decision": "select_index",
+            "selected_index": 0,
+        },
+    ),
+    (
+        "none of those work",
+        {
+            "kind": "slot_decision",
+            "decision": "reject_all",
+        },
+    ),
+    (
+        "cancel my meeting",
+        {
+            "kind": "out_of_scope",
         },
     ),
 ]
