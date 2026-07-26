@@ -15,6 +15,7 @@ from app.calendar_client.client import insert_event as real_insert_event
 from app.dateresolve.resolver import (
     CalendarLookupFn,
     LastMeetingLookupFn,
+    MissingAnchorTimeError,
     MissingDurationError,
     PastDateError,
     UnresolvedReferenceError,
@@ -244,6 +245,12 @@ class DialogueManager:
         except MissingDurationError:
             self.last_turn_timing.resolve_ms = sw.elapsed_ms
             return templates.ask_duration()
+        except MissingAnchorTimeError:
+            # Distinct from ask_duration() - this is deadline_before missing its anchor_time,
+            # found via testing real Gemini on "before I leave for my trip on Friday" (no time
+            # stated), which invented "18:00" from nothing rather than leaving it blank.
+            self.last_turn_timing.resolve_ms = sw.elapsed_ms
+            return templates.ask_deadline_time()
         except UnresolvedReferenceError as exc:
             self.last_turn_timing.resolve_ms = sw.elapsed_ms
             if isinstance(self.state.established_expression, SimpleDateTime):

@@ -19,6 +19,13 @@ def ask_duration() -> list[str]:
     return ["Sure.", "How long should this meeting be?"]
 
 
+def ask_deadline_time() -> list[str]:
+    """Distinct from ask_duration() - deadline_before knows the day but not the time the
+    deadline falls at. Found via testing real Gemini on "before I leave for my trip on Friday"
+    (no time stated): the model invented "18:00" from nothing rather than leaving it blank."""
+    return ["Got it.", "What time is the deadline?"]
+
+
 def ask_day_time_preference() -> list[str]:
     return ["Got it.", "What day or time works for you?"]
 

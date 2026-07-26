@@ -168,6 +168,18 @@ def test_out_of_scope_message_gets_a_clarifying_reply_not_a_fake_booking_attempt
     assert manager.state.phase != "confirming"
 
 
+def test_missing_anchor_time_gets_a_clarifying_reply_not_a_hallucinated_deadline():
+    """"before I leave for my trip on Friday" (no time stated) - found via testing real Gemini:
+    without anchor_time being optional + this check, the model invented "18:00" from nothing and
+    the system would have silently searched against a fabricated deadline."""
+    manager = DialogueManager(now_fn=lambda: NOW, freebusy_fn=_always_free)
+    reply = manager.handle_turn("a quick 10 minute call sometime before I leave for my trip on Friday")
+
+    reply_text = " ".join(reply).lower()
+    assert "time" in reply_text
+    assert manager.state.phase != "confirming"
+
+
 def test_calendar_failure_during_booking_degrades_gracefully():
     def _raises(summary, start, end):
         raise RuntimeError("simulated Calendar API outage during insert")

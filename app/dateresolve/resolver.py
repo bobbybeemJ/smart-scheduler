@@ -11,7 +11,6 @@ import dateparser
 from app.dateresolve import helpers
 from app.schemas import (
     CalendarArithmetic,
-    CalendarArithmeticExpr,
     ContextualReference,
     DeadlineBefore,
     DurationUpdate,
@@ -53,6 +52,13 @@ class PastDateError(Exception):
     per case."""
 
 
+class MissingAnchorTimeError(Exception):
+    """Raised when DeadlineBefore.anchor_time wasn't stated. Found via testing real Gemini on
+    "before I leave for my trip on Friday" (no time given at all): the model didn't leave the
+    field blank or ask for help - it invented "18:00" from nothing, a direct violation of the
+    "never invent a date/time" rule. Same fix shape as MissingDurationError above."""
+
+
 def resolve(
     expr: TemporalExpression,
     now: dt.datetime,
@@ -91,7 +97,7 @@ def _dispatch(
     if isinstance(expr, RelativeRangeWithExclusions):
         return _resolve_relative_range(expr, now)
     if isinstance(expr, DynamicBuffer):
-        return _resolve_dynamic_buffer(expr, now, find_last_meeting)
+        return _resolve_dynamic_buffer(expr, now, find_last_meeting, find_event)
     if isinstance(expr, SimpleDateTime):
         return _resolve_simple_datetime(expr, now)
     if isinstance(expr, ContextualReference):
@@ -118,6 +124,11 @@ def resolve_contextual_duration(expr: ContextualReference, known_defaults: dict[
 
 
 def _resolve_deadline_before(expr: DeadlineBefore, now: dt.datetime) -> ResolvedConstraints:
+    if expr.anchor_time is None:
+        raise MissingAnchorTimeError(
+            "anchor_time is not known yet - ask the user what time the deadline is before "
+            "calling resolve()."
+        )
     anchor = helpers.next_occurrence(now, expr.anchor_weekday, expr.anchor_time)
     deadline = anchor - dt.timedelta(minutes=expr.buffer_minutes)
     earliest_hour = helpers.parse_hhmm(expr.earliest_time)[0] if expr.earliest_time else None
@@ -151,13 +162,7 @@ def _resolve_event_relative(expr: EventRelative, find_event: Optional[CalendarLo
 
 
 def _resolve_calendar_arithmetic(expr: CalendarArithmetic, now: dt.datetime) -> ResolvedConstraints:
-    if expr.expression == CalendarArithmeticExpr.LAST_WEEKDAY_OF_MONTH:
-        day = helpers.last_weekday_of_month(now, expr.month_offset)
-    elif expr.expression == CalendarArithmeticExpr.FIRST_WEEKDAY_OF_MONTH:
-        day = helpers.first_weekday_of_month(now, expr.month_offset)
-    else:
-        raise ValueError(f"Unhandled calendar arithmetic expression: {expr.expression}")
-
+    day = helpers.nth_weekday_of_month(now, expr.ordinal.value, expr.day_type, expr.month_offset)
     start, end = helpers.business_hours_window(day)
     return ResolvedConstraints(duration_minutes=expr.duration_minutes, search_windows=[TimeWindow(start=start, end=end)])
 
@@ -188,21 +193,39 @@ def _resolve_relative_range(expr: RelativeRangeWithExclusions, now: dt.datetime)
 
 
 def _resolve_dynamic_buffer(
-    expr: DynamicBuffer, now: dt.datetime, find_last_meeting: Optional[LastMeetingLookupFn]
+    expr: DynamicBuffer,
+    now: dt.datetime,
+    find_last_meeting: Optional[LastMeetingLookupFn],
+    find_event: Optional[CalendarLookupFn] = None,
 ) -> ResolvedConstraints:
-    if find_last_meeting is None:
-        raise ValueError("find_last_meeting lookup is required to resolve a dynamic_buffer expression")
-
     today = now.date()
-    last_meeting = find_last_meeting(today)
-    stated_hour, stated_minute = helpers.parse_hhmm(expr.after_time)
-    stated_earliest = dt.datetime.combine(today, dt.time(hour=stated_hour, minute=stated_minute))
+    stated_earliest: Optional[dt.datetime] = None
+    if expr.after_time is not None:
+        stated_hour, stated_minute = helpers.parse_hhmm(expr.after_time)
+        stated_earliest = dt.datetime.combine(today, dt.time(hour=stated_hour, minute=stated_minute))
 
-    if last_meeting is not None:
-        buffer_earliest = last_meeting["end"] + dt.timedelta(minutes=expr.buffer_minutes)
-        earliest_start = max(stated_earliest, buffer_earliest)
+    if expr.buffer_source == "named_event":
+        if find_event is None:
+            raise ValueError("find_event lookup is required to resolve a named_event dynamic_buffer expression")
+        if not expr.reference_event_name:
+            raise ValueError("reference_event_name is required when buffer_source is 'named_event'")
+        anchor_event = find_event(expr.reference_event_name)
+        if anchor_event is None:
+            raise UnresolvedReferenceError(f"Could not find an event named {expr.reference_event_name!r} on the calendar")
     else:
+        if find_last_meeting is None:
+            raise ValueError("find_last_meeting lookup is required to resolve a dynamic_buffer expression")
+        anchor_event = find_last_meeting(today)
+
+    if anchor_event is not None:
+        buffer_earliest = anchor_event["end"] + dt.timedelta(minutes=expr.buffer_minutes)
+        earliest_start = max(stated_earliest, buffer_earliest) if stated_earliest is not None else buffer_earliest
+    elif stated_earliest is not None:
         earliest_start = stated_earliest
+    else:
+        raise UnresolvedReferenceError(
+            "dynamic_buffer has neither a stated clock time nor a resolvable anchor event to buffer from"
+        )
 
     end_of_evening = dt.datetime.combine(today, dt.time(hour=helpers.DEFAULT_EVENING_END_HOUR))
     return ResolvedConstraints(

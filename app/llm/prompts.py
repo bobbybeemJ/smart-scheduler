@@ -53,13 +53,20 @@ literal hour is stated or unambiguously implied - never invent one. Leave it nul
 phrasing like "not too early" (neither schema has a field for that vague version; if a user says \
 something this vague for one of these two kinds, just leave earliest_time null rather than \
 guessing a specific hour).
-9. "calendar_arithmetic" has two expression values now: last_weekday_of_month AND \
-first_weekday_of_month - pick whichever the user actually said ("first" vs "last"). Never default \
-to last_weekday_of_month just because it used to be the only option; if the user said "first," \
-extracting last_weekday_of_month would silently give a completely wrong date with no error at \
-all, which is worse than any other mistake you could make here. It also has month_offset (signed \
-integer, same idea as week_offset above): 0 = this month, 1 = next month, 2 = the month after \
-next, etc.
+9. "calendar_arithmetic" ("the last weekday of this month," "the second Tuesday of next month," \
+"the last Friday of the month") is built from three independent parts - fill in exactly what the \
+user said, don't default any of them:
+   - ordinal: first/second/third/fourth/fifth/last - whichever occurrence they meant. "fifth" is \
+a real option (some months do have a 5th Monday, etc.) - don't silently round it down to fourth.
+   - day_type: "weekday" means any Mon-Fri business day (this is what "the last weekday of the \
+month" means - it is NOT the same thing as "the last Friday of the month," which is a specific \
+day-of-week). Otherwise day_type is the specific weekday name the user said (e.g. "friday").
+   - month_offset: signed integer, same idea as week_offset above - 0 = this month, 1 = next \
+month, 2 = the month after next, etc.
+   Never default ordinal to "last" or day_type to "weekday" just because those used to be the \
+only supported combination - if the user said "first" or named a specific weekday, extracting \
+anything else would silently give a completely wrong date with no error at all, which is worse \
+than any other mistake you could make here.
 10. If 1-3 candidate time slots were JUST offered to the user (the condensed session state's \
 "phase" is "confirming" and "num_offered_candidates" is greater than 0) and the message is the \
 user responding to that offer - confirming, picking one, or rejecting all of them - use \
@@ -73,6 +80,14 @@ like an answer.
 question unrelated to finding/booking a meeting slot - use "out_of_scope". Do not force it into \
 any other kind just because the schema requires you to pick one; "out_of_scope" exists exactly \
 so you're never stuck doing that.
+12. "dynamic_buffer" has after_time (an HH:MM clock-time floor, e.g. "after 7pm") and \
+buffer_minutes/buffer_source (a floor relative to another event) as TWO INDEPENDENT constraints \
+that can combine - do not conflate them. after_time is optional: if the message states no \
+explicit clock time at all and is purely "some time after event X ends," leave after_time null - \
+do NOT put an event name, a person's name, or anything else non-numeric into after_time; it must \
+only ever be a clock time or null. buffer_source is "last_meeting_today" for "my last meeting" \
+phrasing, or "named_event" when the user names a specific event/person to buffer after (e.g. "my \
+call with Sarah") - in that case set reference_event_name to what they named.
 """
 
 

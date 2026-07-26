@@ -23,6 +23,16 @@ _CANNED_RESPONSES: list[tuple[str, dict]] = [
         },
     ),
     (
+        "leave for my trip",
+        {
+            "kind": "deadline_before",
+            "duration_minutes": 10,
+            "anchor_weekday": "Friday",
+            "anchor_time": None,
+            "buffer_minutes": 0,
+        },
+    ),
+    (
         "kick-off",
         {
             "kind": "event_relative",
@@ -59,7 +69,8 @@ _CANNED_RESPONSES: list[tuple[str, dict]] = [
         {
             "kind": "calendar_arithmetic",
             "duration_minutes": 60,
-            "expression": "last_weekday_of_month",
+            "ordinal": "last",
+            "day_type": "weekday",
         },
     ),
     (
@@ -67,7 +78,27 @@ _CANNED_RESPONSES: list[tuple[str, dict]] = [
         {
             "kind": "calendar_arithmetic",
             "duration_minutes": 60,
-            "expression": "first_weekday_of_month",
+            "ordinal": "first",
+            "day_type": "weekday",
+        },
+    ),
+    (
+        "second tuesday",
+        {
+            "kind": "calendar_arithmetic",
+            "duration_minutes": 60,
+            "ordinal": "second",
+            "day_type": "tuesday",
+            "month_offset": 1,
+        },
+    ),
+    (
+        "last friday of",
+        {
+            "kind": "calendar_arithmetic",
+            "duration_minutes": 60,
+            "ordinal": "last",
+            "day_type": "friday",
         },
     ),
     (
@@ -111,6 +142,17 @@ _CANNED_RESPONSES: list[tuple[str, dict]] = [
             "duration_minutes": None,
             "after_time": "19:00",
             "buffer_minutes": 60,
+        },
+    ),
+    (
+        "wraps up",
+        {
+            "kind": "dynamic_buffer",
+            "duration_minutes": 20,
+            "after_time": None,
+            "buffer_minutes": 60,
+            "buffer_source": "named_event",
+            "reference_event_name": "call with Sarah",
         },
     ),
     (

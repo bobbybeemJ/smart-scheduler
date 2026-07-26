@@ -11,6 +11,8 @@ from typing import Optional
 from dateutil import parser as date_parser
 from dateutil.relativedelta import relativedelta
 
+from app.schemas import DAY_TYPE_WEEKDAY
+
 WEEKDAY_NAMES = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 
 DEFAULT_BUSINESS_START_HOUR = 9
@@ -90,28 +92,41 @@ def next_occurrence(now: dt.datetime, weekday_name: str, time_str: str) -> dt.da
     return candidate
 
 
-def last_weekday_of_month(reference: dt.datetime, month_offset: int = 0) -> dt.date:
-    """Last Mon-Fri day of the month `month_offset` months from `reference`'s month (walks back
-    from the last calendar day). 0 = reference's own month, 1 = next month, etc. - mirrors
-    week_range()'s signed-offset design."""
-    target_month_start = (reference.replace(day=1) + relativedelta(months=month_offset)).date()
-    first_of_next_month = target_month_start + relativedelta(months=1)
-    last_day = first_of_next_month - dt.timedelta(days=1)
-    while last_day.weekday() >= 5:  # Saturday=5, Sunday=6
-        last_day -= dt.timedelta(days=1)
-    return last_day
+_ORDINAL_INDEX = {"first": 0, "second": 1, "third": 2, "fourth": 3, "fifth": 4}
 
 
-def first_weekday_of_month(reference: dt.datetime, month_offset: int = 0) -> dt.date:
-    """First Mon-Fri day of the month `month_offset` months from `reference`'s month (walks
-    forward from the 1st). Mirrors last_weekday_of_month(); added after testing real Gemini
-    showed asking for "the first weekday of next month" against a schema that only had
-    LAST_WEEKDAY_OF_MONTH silently returned the wrong (last-weekday) answer instead of failing."""
+def nth_weekday_of_month(reference: dt.datetime, ordinal: str, day_type: str, month_offset: int = 0) -> dt.date:
+    """The general form behind "last weekday of this month", "first weekday of next month", "the
+    second Tuesday of next month", "the last Friday of the month" - one function covering the
+    full (ordinal x day_type x month) space, replacing what used to be a separate hardcoded case
+    per phrase (last_weekday_of_month(), then first_weekday_of_month() bolted on next to it,
+    which was heading toward needing a new function for every new phrase forever).
+
+    day_type == "weekday" means any Mon-Fri business day (the assignment brief's own "last
+    weekday of the month" example); any other value is a specific weekday name, e.g. "friday".
+    Raises ValueError if the target month doesn't have that many occurrences (e.g. the 5th Monday
+    of a month that only has four) - a real possibility now that FIFTH is a reachable ordinal,
+    not a made-up edge case."""
     target_month_start = (reference.replace(day=1) + relativedelta(months=month_offset)).date()
-    first_day = target_month_start
-    while first_day.weekday() >= 5:  # Saturday=5, Sunday=6
-        first_day += dt.timedelta(days=1)
-    return first_day
+    next_month_start = target_month_start + relativedelta(months=1)
+    target_weekday = None if day_type == DAY_TYPE_WEEKDAY else weekday_index(day_type)
+
+    candidates = []
+    day = target_month_start
+    while day < next_month_start:
+        if (target_weekday is None and day.weekday() < 5) or day.weekday() == target_weekday:
+            candidates.append(day)
+        day += dt.timedelta(days=1)
+
+    if ordinal == "last":
+        return candidates[-1]
+    index = _ORDINAL_INDEX[ordinal]
+    if index >= len(candidates):
+        raise ValueError(
+            f"{target_month_start.strftime('%B %Y')} doesn't have a {ordinal!r} {day_type} "
+            f"(only {len(candidates)} found)"
+        )
+    return candidates[index]
 
 
 def business_hours_window(

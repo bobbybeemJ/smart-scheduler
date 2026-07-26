@@ -7,7 +7,6 @@ import datetime as dt
 from app.dateresolve.resolver import resolve, resolve_contextual_duration
 from app.schemas import (
     CalendarArithmetic,
-    CalendarArithmeticExpr,
     ContextualReference,
     DeadlineBefore,
     DynamicBuffer,
@@ -63,7 +62,7 @@ def main() -> None:
 
     show(
         "calendar_arithmetic: '1-hour meeting for the last weekday of this month'",
-        resolve(CalendarArithmetic(duration_minutes=60, expression=CalendarArithmeticExpr.LAST_WEEKDAY_OF_MONTH), NOW),
+        resolve(CalendarArithmetic(duration_minutes=60, ordinal="last", day_type="weekday"), NOW),
     )
 
     show(

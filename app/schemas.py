@@ -30,19 +30,22 @@ class WeekPosition(str, Enum):
     LATE_IN_RANGE = "late_in_range"
 
 
-class CalendarArithmeticExpr(str, Enum):
-    """Found via testing real Gemini: with only LAST_WEEKDAY_OF_MONTH available, asking for "the
-    FIRST weekday of next month" didn't fail or fall back gracefully - the model just forced the
-    only enum value it had, silently returning last_weekday_of_month for a request that
-    explicitly said "first." That's worse than a dropped field: confidently wrong output with no
-    error at all. FIRST_WEEKDAY_OF_MONTH closes that specific hole. (Arbitrary "Nth weekday of
-    month," e.g. "the second Tuesday," is a deliberately separate, unimplemented case - the
-    assignment brief's own example is only ever "last weekday of the month," and Nth-weekday-of-
-    month is a materially bigger feature; see SimpleDateTime's dateparser fallback, which handles
-    it approximately but not reliably.)"""
+class Ordinal(str, Enum):
+    """Which occurrence of day_type within the target month. FIFTH is included because some
+    months genuinely have a 5th occurrence of a given weekday (e.g. a 31-day month starting on
+    that weekday) - leaving it out would silently mis-resolve a rare but real phrase the same way
+    LAST_WEEKDAY_OF_MONTH being the only option once did."""
 
-    LAST_WEEKDAY_OF_MONTH = "last_weekday_of_month"
-    FIRST_WEEKDAY_OF_MONTH = "first_weekday_of_month"
+    FIRST = "first"
+    SECOND = "second"
+    THIRD = "third"
+    FOURTH = "fourth"
+    FIFTH = "fifth"
+    LAST = "last"
+
+
+DAY_TYPE_WEEKDAY = "weekday"  # any Mon-Fri business day, not a specific day-of-week
+DayType = Literal["weekday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 
 
 class DeadlineBefore(BaseModel):
@@ -51,7 +54,13 @@ class DeadlineBefore(BaseModel):
     kind: Literal["deadline_before"] = "deadline_before"
     duration_minutes: Optional[int] = None
     anchor_weekday: str
-    anchor_time: str
+    anchor_time: Optional[str] = None
+    """Found via testing real Gemini on "before I leave for my trip on Friday" (no time stated
+    at all): with this field required, the model didn't ask for clarification or leave it
+    blank - it invented "18:00" out of nowhere, with zero basis in the input. That's a direct
+    violation of this system's core rule (never invent a date/time), identical in spirit to the
+    duration_minutes guessing problem rule 2 already guards against - just not applied here.
+    Optional + MissingAnchorTimeError (resolver.py) closes the same hole the same way."""
     buffer_minutes: int = 0
     earliest_time: Optional[str] = None
     """"nothing before 9am" - an HH:MM (24h) floor applying to every day the search window
@@ -78,16 +87,25 @@ class EventRelative(BaseModel):
 
 
 class CalendarArithmetic(BaseModel):
-    """"1-hour meeting for the last weekday of this month" """
+    """"1-hour meeting for the last weekday of this month" - and generally, "the Nth <day-type>
+    of <month>" for any ordinal/day-type/month combination. Originally this was a single enum of
+    whole phrases (just LAST_WEEKDAY_OF_MONTH); adding FIRST_WEEKDAY_OF_MONTH as a second enum
+    value for "first weekday of next month" turned out to be the same mistake the old
+    this_week/next_week enum was, one level removed - a new phrase always needs a new hardcoded
+    value. Decomposing into its real, independent dimensions (which occurrence x which kind of
+    day x which month) covers the whole combinatorial space - "second Tuesday", "last Friday",
+    "first weekday of next month" - with one resolver function instead of one case per phrase."""
 
     kind: Literal["calendar_arithmetic"] = "calendar_arithmetic"
     duration_minutes: Optional[int] = None
-    expression: CalendarArithmeticExpr
+    ordinal: Ordinal
+    day_type: DayType
+    """"weekday" means any Mon-Fri business day (the assignment brief's own "last weekday of the
+    month" example). Any other value is a specific day-of-week name - "last Friday of the
+    month" is ordinal=LAST, day_type="friday", a materially different date than "last weekday"."""
     month_offset: int = 0
-    """Signed integer counting calendar months from the CURRENT month, mirroring
-    RelativeRangeWithExclusions.week_offset. 0 = this month, 1 = next month, etc. Added
-    alongside FIRST_WEEKDAY_OF_MONTH so "the last weekday of next month" doesn't hit the exact
-    same silent-wrong-enum failure mode all over again for the month dimension."""
+    """Signed integer counting calendar months from the CURRENT month - 0 = this month, 1 = next
+    month, etc. Mirrors RelativeRangeWithExclusions.week_offset."""
 
 
 class RelativeRangeWithExclusions(BaseModel):
@@ -123,13 +141,27 @@ class ContextualReference(BaseModel):
 
 
 class DynamicBuffer(BaseModel):
-    """"evening, after 7, but I need an hour to decompress after my last meeting" """
+    """"evening, after 7, but I need an hour to decompress after my last meeting" - after_time
+    (a stated clock-time floor) and buffer_minutes/buffer_source (a floor relative to another
+    event) are independent constraints that combine (the later of the two wins), not
+    alternatives - the assignment's own example states both at once."""
 
     kind: Literal["dynamic_buffer"] = "dynamic_buffer"
     duration_minutes: Optional[int] = None
-    after_time: str
+    after_time: Optional[str] = None
+    """An explicit HH:MM clock-time floor ("after 7pm"). Found via testing real Gemini: when a
+    message has NO stated clock time at all - just a buffer relative to a named event, e.g. "at
+    least an hour after my call with Sarah wraps up" - forcing this field to be non-null made the
+    model stuff the person's name in here instead, which then crashed trying to parse "Sarah" as
+    a time. Leave this null whenever no explicit clock time is stated; buffer_source/
+    reference_event_name below carry the "relative to an event" part on their own."""
     buffer_minutes: int
-    buffer_source: Literal["last_meeting_today"] = "last_meeting_today"
+    buffer_source: Literal["last_meeting_today", "named_event"] = "last_meeting_today"
+    reference_event_name: Optional[str] = None
+    """Only set when buffer_source == "named_event" - e.g. "my call with Sarah" - resolved via
+    the same calendar event lookup event_relative already uses. Added alongside making
+    after_time optional so a named-event reference has an honest field to live in instead of
+    being forced into after_time."""
 
 
 class SimpleDateTime(BaseModel):

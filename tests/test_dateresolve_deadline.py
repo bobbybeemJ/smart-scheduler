@@ -8,7 +8,7 @@ from app import config
 
 config.settings.use_mock_llm = True
 
-from app.dateresolve.resolver import resolve  # noqa: E402
+from app.dateresolve.resolver import MissingAnchorTimeError, resolve  # noqa: E402
 from app.llm.client import extract_intent  # noqa: E402
 from app.schemas import DeadlineBefore  # noqa: E402
 from app.scheduling.slot_finder import find_available_slots  # noqa: E402
@@ -75,3 +75,21 @@ def test_deadline_before_earliest_time_floor_applies_across_every_day_not_just_f
     for day, day_slots in by_day.items():
         earliest = min(s.start for s in day_slots)
         assert earliest.hour >= 11, f"{day}: earliest candidate {earliest} violates the 11am floor"
+
+
+def test_missing_anchor_time_extracted_correctly_from_mock_llm():
+    """"before I leave for my trip on Friday" (no time stated at all) - found via testing real
+    Gemini: with anchor_time required, the model invented "18:00" from nothing instead of
+    leaving it null, a direct violation of the "never invent a date/time" rule."""
+    intent = extract_intent("a quick 10 minute call sometime before I leave for my trip on Friday")
+    assert isinstance(intent, DeadlineBefore)
+    assert intent.anchor_time is None
+
+
+def test_missing_anchor_time_raises_instead_of_silently_resolving():
+    intent = DeadlineBefore(duration_minutes=10, anchor_weekday="Friday", anchor_time=None)
+    try:
+        resolve(intent, NOW)
+        assert False, "expected MissingAnchorTimeError"
+    except MissingAnchorTimeError:
+        pass
