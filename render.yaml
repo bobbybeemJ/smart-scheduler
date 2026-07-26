@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: nxd-smart-scheduler
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: USE_MOCK_LLM
+        value: "false"
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-flash-lite-latest
+      - key: GOOGLE_OAUTH_CLIENT_ID
+        sync: false
+      - key: GOOGLE_OAUTH_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_OAUTH_REFRESH_TOKEN
+        sync: false
+      - key: ENABLE_SERVER_STT_FALLBACK
+        value: "true"
+      - key: WHISPER_FALLBACK_MODEL
+        value: tiny.en
+      - key: TTS_VOICE
+        value: en-US-AriaNeural
+      - key: USER_TIMEZONE
+        value: Asia/Kolkata
+      - key: LOG_LEVEL
+        value: INFO
