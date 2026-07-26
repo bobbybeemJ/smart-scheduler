@@ -69,6 +69,9 @@ _ORDINAL_SELECTORS = {
 }
 
 
+_FAST_PATH_MAX_WORDS = 5
+
+
 def _looks_like_confirmation(text: str) -> bool:
     normalized = text.strip().lower().rstrip(".!")
     return normalized in _CONFIRMATION_PHRASES or any(phrase in normalized for phrase in _CONFIRMATION_PHRASES)
@@ -77,8 +80,18 @@ def _looks_like_confirmation(text: str) -> bool:
 def _parse_slot_selection(text: str, num_offered: int) -> Optional[int]:
     """Returns the 0-based index the user picked, or None if the message isn't a selection/
     confirmation at all (in which case the caller should fall through to normal extraction -
-    e.g. the user changed their mind about the day/time instead of picking an option)."""
+    e.g. the user changed their mind about the day/time instead of picking an option).
+
+    Longer messages are deliberately never matched here, even if they happen to contain a
+    phrase like "book it" - found via testing real usage: "book it for July 28 at 11am" contains
+    "book it" as a substring and was matching this fast path, silently booking whichever slot was
+    already offered and discarding the different time the user just stated. Anything longer than
+    a short handful of words is far more likely to carry new information than to be a bare
+    confirmation, so it's left to the LLM's slot_decision classification instead, which already
+    knows to treat a message with its own new day/time as a fresh request, not a confirmation."""
     normalized = text.strip().lower().rstrip(".!")
+    if len(normalized.split()) > _FAST_PATH_MAX_WORDS:
+        return None
     for phrase, index in _ORDINAL_SELECTORS.items():
         if phrase in normalized and index < num_offered:
             return index

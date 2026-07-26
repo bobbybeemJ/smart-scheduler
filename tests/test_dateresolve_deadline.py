@@ -93,3 +93,29 @@ def test_missing_anchor_time_raises_instead_of_silently_resolving():
         assert False, "expected MissingAnchorTimeError"
     except MissingAnchorTimeError:
         pass
+
+
+def test_weekend_days_are_excluded_by_default_when_the_window_spans_one():
+    """Found via real usage: "1 hour before my 5:30 meeting on Wednesday," asked on a Sunday,
+    proposed a candidate slot ON that Sunday - never asked for. The search window legitimately
+    spans from "now" to the deadline, but with no weekend exclusion at all, every day in between
+    was fair game regardless of whether the user ever said weekends were acceptable."""
+    sunday = dt.datetime(2026, 7, 26, 9, 0)
+    intent = DeadlineBefore(duration_minutes=60, anchor_weekday="Wednesday", anchor_time="17:30")
+    constraints = resolve(intent, sunday)
+
+    slots = find_available_slots(constraints, freebusy_fn=_always_free, max_results=200)
+    assert slots, "expected at least one candidate"
+    assert all(s.start.weekday() < 5 for s in slots), "no candidate should fall on a weekend"
+
+
+def test_weekend_anchor_day_itself_is_not_excluded():
+    """The weekend-exclusion default must not exclude the deadline's OWN day if that day happens
+    to be a weekend - "before my flight Saturday at 6pm" must still allow Saturday itself, the
+    one day that's actually the point of the request."""
+    monday = dt.datetime(2026, 7, 20, 9, 0)
+    intent = DeadlineBefore(duration_minutes=60, anchor_weekday="Saturday", anchor_time="18:00")
+    constraints = resolve(intent, monday)
+
+    slots = find_available_slots(constraints, freebusy_fn=_always_free, max_results=200)
+    assert any(s.start.weekday() == 5 for s in slots), "Saturday itself (the anchor day) should still be searchable"

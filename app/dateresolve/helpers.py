@@ -41,14 +41,16 @@ def strip_day_part(phrase: str) -> str:
     return re.sub(day_part, "", phrase, flags=re.IGNORECASE).strip()
 
 
-_WEEKDAY_PREFIX_RE = re.compile(r"^(next|this|on|coming)\s+", re.IGNORECASE)
+_WEEKDAY_PREFIX_RE = re.compile(r"^(next|this|coming)?\s*(week)?\s*(on)?\s*", re.IGNORECASE)
 _TIME_TOKEN_RE = re.compile(r"\b\d{1,2}(:\d{2})?\s*(am|pm)\b|\b\d{1,2}:\d{2}\b", re.IGNORECASE)
 
 
 def try_parse_weekday_only(now: dt.datetime, phrase: str) -> Optional[dt.date]:
-    """Handles "Monday", "next Monday", "this Monday", "on Monday" via our own deterministic
-    weekday arithmetic. dateparser is empirically unreliable on the "next <weekday>" phrasing
-    (observed returning None for it), so bare weekday references never go through dateparser."""
+    """Handles "Monday", "next Monday", "this Monday", "on Monday", and "next week on Monday"
+    (a real phrasing found via real Gemini for "next week on Tuesday" - dateparser flatly fails
+    to parse that exact wording, returning None) via our own deterministic weekday arithmetic.
+    dateparser is also empirically unreliable on plain "next <weekday>" phrasing (observed
+    returning None for it), so bare weekday references never go through dateparser at all."""
     candidate = _WEEKDAY_PREFIX_RE.sub("", phrase).strip()
     try:
         target_weekday = weekday_index(candidate)
@@ -60,6 +62,20 @@ def try_parse_weekday_only(now: dt.datetime, phrase: str) -> Optional[dt.date]:
 
 def phrase_has_explicit_time(phrase: str) -> bool:
     return bool(_TIME_TOKEN_RE.search(phrase))
+
+
+_WEEKDAY_NAME_RE = re.compile(r"\b(" + "|".join(WEEKDAY_NAMES) + r")\b", re.IGNORECASE)
+
+
+def extract_stated_weekday(phrase: str) -> Optional[int]:
+    """The weekday index (0=Monday) of a weekday name found anywhere in the phrase, or None if
+    none is mentioned. Used to sanity-check dateparser's output - found via testing real usage:
+    "Wednesday 6" (an ambiguous phrase, likely a garbled "Wednesday at 6") got parsed by
+    dateparser into a date that was a SATURDAY, not a Wednesday at all, and was trusted with no
+    error. A stated weekday that the resolved date doesn't actually fall on is a strong signal
+    dateparser guessed wrong, not that the user meant something unusual."""
+    match = _WEEKDAY_NAME_RE.search(phrase)
+    return WEEKDAY_NAMES.index(match.group(1).lower()) if match else None
 
 
 def weekday_index(name: str) -> int:

@@ -73,6 +73,7 @@ def test_booking_confirmation_calls_insert_event_and_updates_phase():
 
     assert booked["start"] == offered_slot.start
     assert booked["end"] == offered_slot.end
+    assert booked["summary"] == "Meeting (scheduled by NxD Smart Scheduler)"  # no title was ever stated
     assert manager.state.phase == "booked"
     assert manager.state.top_candidate is None
     reply_text = " ".join(reply).lower()
@@ -112,6 +113,28 @@ def test_past_week_offset_degrades_to_clarifying_reply_not_calendar_failure():
     reply_text = " ".join(reply).lower()
     assert "future" in reply_text
     assert manager.state.phase != "confirming"
+
+
+def test_fast_path_confirmation_does_not_swallow_a_message_with_its_own_new_time():
+    """"book it for July 28 at 11am" contains "book it" as a substring, which used to match the
+    fast local confirmation check (_looks_like_confirmation) and silently book whichever slot
+    was already offered, discarding the different time the user actually stated - found via real
+    usage where this booked the wrong (originally offered) slot instead of the requested one."""
+    from app.dialogue.manager import _parse_slot_selection
+
+    assert _parse_slot_selection("book it for a totally different time with extra words", num_offered=3) is None
+    assert _parse_slot_selection("book it", num_offered=3) == 0  # short bare confirmations still fast-path
+
+    manager = DialogueManager(now_fn=lambda: NOW, freebusy_fn=_always_free)
+    manager.handle_turn("Tuesday at 2pm")
+    assert manager.state.phase == "confirming"
+    offered_slot = manager.state.top_candidate
+
+    manager.handle_turn("book it for a totally different time")
+
+    assert manager.state.phase == "confirming"
+    assert manager.state.established_expression.raw_phrase == "next Friday at 11am"
+    assert manager.state.top_candidate != offered_slot
 
 
 def test_slot_decision_select_index_via_llm_fallback_when_fast_path_is_ambiguous():

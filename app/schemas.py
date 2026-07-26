@@ -48,11 +48,27 @@ DAY_TYPE_WEEKDAY = "weekday"  # any Mon-Fri business day, not a specific day-of-
 DayType = Literal["weekday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 
 
-class DeadlineBefore(BaseModel):
+class SchedulingRequestBase(BaseModel):
+    """Shared by every "kind" that represents an actual new meeting to find/book (everything
+    except contextual_reference/duration_update/slot_decision/out_of_scope, which don't carry a
+    fresh request of their own). Consolidates duration_minutes, previously duplicated
+    identically in all six kinds below.
+
+    A meeting_title field was tried here too (extracting "with Rahul" as a real calendar event
+    name instead of a generic default) but reverted - adding it destabilized real Gemini's
+    structured output on this free-tier model: the model's own leaked reasoning showed it
+    correctly computing the title internally, but the actual meeting_title field still came back
+    null while that reasoning text spilled into raw_phrase instead, corrupting date parsing. Not
+    worth shipping an unreliable feature - reconsider only if it can be done without adding
+    another field to an already-large union."""
+
+    duration_minutes: Optional[int] = None
+
+
+class DeadlineBefore(SchedulingRequestBase):
     """"45 minutes sometime before my flight Friday at 6 PM" """
 
     kind: Literal["deadline_before"] = "deadline_before"
-    duration_minutes: Optional[int] = None
     anchor_weekday: str
     anchor_time: Optional[str] = None
     """Found via testing real Gemini on "before I leave for my trip on Friday" (no time stated
@@ -71,11 +87,10 @@ class DeadlineBefore(BaseModel):
     this project doesn't currently support a vague preference on this schema kind)."""
 
 
-class EventRelative(BaseModel):
+class EventRelative(SchedulingRequestBase):
     """"a 15-minute chat a day or two after the Project Alpha Kick-off event" """
 
     kind: Literal["event_relative"] = "event_relative"
-    duration_minutes: Optional[int] = None
     event_name: str
     offset_days_min: int
     offset_days_max: int
@@ -86,7 +101,7 @@ class EventRelative(BaseModel):
     states or clearly implies a literal hour."""
 
 
-class CalendarArithmetic(BaseModel):
+class CalendarArithmetic(SchedulingRequestBase):
     """"1-hour meeting for the last weekday of this month" - and generally, "the Nth <day-type>
     of <month>" for any ordinal/day-type/month combination. Originally this was a single enum of
     whole phrases (just LAST_WEEKDAY_OF_MONTH); adding FIRST_WEEKDAY_OF_MONTH as a second enum
@@ -97,7 +112,6 @@ class CalendarArithmetic(BaseModel):
     "first weekday of next month" - with one resolver function instead of one case per phrase."""
 
     kind: Literal["calendar_arithmetic"] = "calendar_arithmetic"
-    duration_minutes: Optional[int] = None
     ordinal: Ordinal
     day_type: DayType
     """"weekday" means any Mon-Fri business day (the assignment brief's own "last weekday of the
@@ -108,10 +122,15 @@ class CalendarArithmetic(BaseModel):
     month, etc. Mirrors RelativeRangeWithExclusions.week_offset."""
 
 
-class RelativeRangeWithExclusions(BaseModel):
+class RelativeRangeWithExclusions(SchedulingRequestBase):
     """"next week, not too early, not on Wednesday" - also covers "sometime late next week"
     via week_position (which days of the range) as distinct from time_preference (which hours
-    within a day).
+    within a day). Only for a genuine RANGE of days to search across - if the user names ONE
+    specific day (even phrased with "next week", e.g. "next week on Tuesday" - which really just
+    means "next Tuesday"), use simple_datetime instead so that day isn't silently lost; this
+    schema has no field for "restrict to a single specific weekday," only exclude_weekdays
+    (days to AVOID), so a single-day request extracted as this kind loses the day entirely and
+    resolves to the whole week instead.
 
     week_offset is a signed integer relative to the CURRENT calendar week: 0 = this week,
     1 = next week, 2 = the week after next / "two weeks from now", -1 = last week, etc. This
@@ -125,7 +144,6 @@ class RelativeRangeWithExclusions(BaseModel):
     one, so "last week" is caught centrally rather than needing per-case validation."""
 
     kind: Literal["relative_range_with_exclusions"] = "relative_range_with_exclusions"
-    duration_minutes: Optional[int] = None
     week_offset: int = 1
     exclude_weekdays: list[str] = Field(default_factory=list)
     time_preference: Optional[TimePreference] = None
@@ -140,14 +158,13 @@ class ContextualReference(BaseModel):
     reference: str
 
 
-class DynamicBuffer(BaseModel):
+class DynamicBuffer(SchedulingRequestBase):
     """"evening, after 7, but I need an hour to decompress after my last meeting" - after_time
     (a stated clock-time floor) and buffer_minutes/buffer_source (a floor relative to another
     event) are independent constraints that combine (the later of the two wins), not
     alternatives - the assignment's own example states both at once."""
 
     kind: Literal["dynamic_buffer"] = "dynamic_buffer"
-    duration_minutes: Optional[int] = None
     after_time: Optional[str] = None
     """An explicit HH:MM clock-time floor ("after 7pm"). Found via testing real Gemini: when a
     message has NO stated clock time at all - just a buffer relative to a named event, e.g. "at
@@ -164,13 +181,12 @@ class DynamicBuffer(BaseModel):
     being forced into after_time."""
 
 
-class SimpleDateTime(BaseModel):
+class SimpleDateTime(SchedulingRequestBase):
     """Not one of the 6 hard cases from the assignment brief, but the most common thing a real
     user says: "Tuesday at 2pm", "tomorrow morning", "next Monday". `raw_phrase` is resolved by
     dateparser (deterministic, not the LLM) in the resolver."""
 
     kind: Literal["simple_datetime"] = "simple_datetime"
-    duration_minutes: Optional[int] = None
     raw_phrase: str
 
 

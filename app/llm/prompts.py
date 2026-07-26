@@ -23,7 +23,15 @@ as null. Do NOT invent a "reasonable-sounding" default like 30. Guessing here is
 meeting should be.
 3. Choose exactly one schema variant ("kind") that best matches the user's phrasing. Only use \
 "contextual_reference" when the user refers to a previous/habitual meeting by description (e.g. \
-"our usual sync-up", "the normal meeting"), not for a fresh request with its own constraints.
+"our usual sync-up", "the normal meeting"), not for a fresh request with its own constraints. If \
+the user names ONE specific day - a weekday name, "tomorrow," a specific date - use \
+"simple_datetime", even if the phrase also happens to include words like "next week" ("next week \
+on Tuesday" means "next Tuesday" - one specific day, not a range). Reserve \
+"relative_range_with_exclusions" for when the user actually wants a RANGE of days searched \
+(exclusions across several candidate days, "sometime next week" with no single day named). \
+relative_range_with_exclusions has no field for "restrict to exactly this one weekday" - if you \
+put a single-day request there, that day is silently lost and the whole week gets searched \
+instead, which is wrong.
 4. Use the condensed session state only to fill in duration_minutes when the user is clearly \
 continuing an already-established conversation about a meeting whose duration was given earlier \
 - never use it to fill in a duration for an unrelated new request.
@@ -69,13 +77,19 @@ anything else would silently give a completely wrong date with no error at all, 
 than any other mistake you could make here.
 10. If 1-3 candidate time slots were JUST offered to the user (the condensed session state's \
 "phase" is "confirming" and "num_offered_candidates" is greater than 0) and the message is the \
-user responding to that offer - confirming, picking one, or rejecting all of them - use \
-"slot_decision", not any date/time-extraction kind. decision is "confirm_top" (accepting \
-whichever was offered, or a clear affirmative with no specific pick), "select_index" (they named \
-a specific one - set selected_index to the 0-based position they meant), or "reject_all" (they \
-don't want any of the offered options). Do not use this kind if "phase" is not "confirming" - a \
-fresh scheduling request always gets its own proper kind instead, even if it superficially sounds \
-like an answer.
+user responding to that SAME offer - confirming, picking one, or rejecting all of them, with NO \
+new specific day/time/duration of their own - use "slot_decision", not any date/time-extraction \
+kind. decision is "confirm_top" (accepting whichever was offered, or a clear affirmative with no \
+specific pick), "select_index" (they named a specific ALREADY-OFFERED one - set selected_index \
+to the 0-based position they meant), or "reject_all" (they don't want any of the offered \
+options). Do not use this kind if "phase" is not "confirming" - a fresh scheduling request always \
+gets its own proper kind instead, even if it superficially sounds like an answer. CRITICALLY: if \
+the message states its OWN specific day/time/duration that's different from what was offered \
+(e.g. "book it for July 28 at 11am" when 9am/9:30am/10am were offered) - that is a FRESH request \
+for that new day/time, not a slot_decision, even though it also contains booking-sounding words \
+like "book" - extract it as simple_datetime (or whatever kind fits) with the new information, not \
+as confirm_top. Silently keeping the old offered time when the user just stated a different one \
+would book the wrong slot.
 11. If the message isn't a scheduling request at all - cancelling something, small talk, a \
 question unrelated to finding/booking a meeting slot - use "out_of_scope". Do not force it into \
 any other kind just because the schema requires you to pick one; "out_of_scope" exists exactly \

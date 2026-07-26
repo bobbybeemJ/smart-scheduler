@@ -132,11 +132,19 @@ def _resolve_deadline_before(expr: DeadlineBefore, now: dt.datetime) -> Resolved
     anchor = helpers.next_occurrence(now, expr.anchor_weekday, expr.anchor_time)
     deadline = anchor - dt.timedelta(minutes=expr.buffer_minutes)
     earliest_hour = helpers.parse_hhmm(expr.earliest_time)[0] if expr.earliest_time else None
+    # Found via real usage: with no weekend exclusion at all, a multi-day window that happened
+    # to start on a weekend (e.g. deadline stated for a weekday next week, "now" already a
+    # Saturday/Sunday) proposed candidates ON that weekend - never asked for. Exclude both
+    # weekend days EXCEPT the anchor's own weekday, so "before my flight Saturday" still allows
+    # Saturday itself (the one day that's actually the point of the request).
+    anchor_weekday_index = helpers.weekday_index(expr.anchor_weekday)
+    excluded_weekdays = [weekday for weekday in (5, 6) if weekday != anchor_weekday_index]
     return ResolvedConstraints(
         duration_minutes=expr.duration_minutes,
         search_windows=[TimeWindow(start=now, end=deadline)],
         hard_deadline=deadline,
         earliest_hour=earliest_hour,
+        excluded_weekdays=excluded_weekdays,
     )
 
 
@@ -247,6 +255,17 @@ def _resolve_simple_datetime(expr: SimpleDateTime, now: dt.datetime) -> Resolved
         if parsed is None:
             raise UnresolvedReferenceError(f"Could not parse date/time phrase: {expr.raw_phrase!r}")
         base_date = parsed.date()
+
+        stated_weekday = helpers.extract_stated_weekday(remainder)
+        if stated_weekday is not None and base_date.weekday() != stated_weekday:
+            # dateparser confidently returned a date that isn't even the weekday the user named
+            # (e.g. "Wednesday 6" - likely a garbled "Wednesday at 6" - resolved to a Saturday)
+            # - found via real usage. Reject rather than silently proposing a wrong date.
+            raise UnresolvedReferenceError(
+                f"Could not reliably parse {expr.raw_phrase!r} - resolved to {base_date} "
+                f"({base_date.strftime('%A')}), which doesn't match the stated weekday"
+            )
+
         # dateparser copies now's time-of-day when the phrase has no explicit time - so a
         # differing time (or an explicit am/pm/colon token in the text) means one was stated.
         if helpers.phrase_has_explicit_time(remainder) or (parsed.hour, parsed.minute) != (now.hour, now.minute):

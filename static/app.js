@@ -92,21 +92,43 @@ function setListening(value) {
 
 if (SpeechRecognition) {
   recognition = new SpeechRecognition();
-  recognition.continuous = false;
+  // continuous=false made Chrome end the whole session on the FIRST brief pause mid-sentence,
+  // silently truncating anything said after it (e.g. "schedule a meeting for next Wednesday"
+  // <pause> "at 3pm" would only ever send the first half) - found from real usage where several
+  // turns arrived as obvious sentence fragments. continuous=true keeps listening across pauses;
+  // the session now only ends when the user deliberately taps the mic again to stop.
+  recognition.continuous = true;
   recognition.interimResults = false;
   recognition.lang = "en-US";
 
+  let accumulatedTranscript = "";
+
   recognition.onresult = (event) => {
-    const text = event.results[event.results.length - 1][0].transcript;
-    sendTranscript(text, "web_speech");
+    // In continuous mode a single session can still emit multiple separate final results (one
+    // per natural pause) - only appending event.resultIndex onward (not resetting each time)
+    // avoids re-processing results already accumulated from earlier in this same session.
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      if (event.results[i].isFinal) {
+        accumulatedTranscript += event.results[i][0].transcript + " ";
+      }
+    }
   };
-  recognition.onerror = (e) => logEntry(`recognition error: ${e.error}`, "error");
-  recognition.onend = () => setListening(false);
+  recognition.onerror = (e) => {
+    logEntry(`recognition error: ${e.error}`, "error");
+    setListening(false); // otherwise an error left the button stuck showing "tap to stop"
+  };
+  recognition.onend = () => {
+    setListening(false);
+    const text = accumulatedTranscript.trim();
+    accumulatedTranscript = "";
+    if (text) sendTranscript(text, "web_speech");
+  };
 
   micBtn.onclick = () => {
     if (listening) {
       recognition.stop();
     } else {
+      accumulatedTranscript = "";
       recognition.start();
       setListening(true);
     }
