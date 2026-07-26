@@ -17,11 +17,29 @@ from zoneinfo import ZoneInfo
 
 from dateutil import parser as date_parser
 from googleapiclient.discovery import Resource, build
+from googleapiclient.errors import HttpError
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from app.calendar_client.auth import build_credentials_from_env
 from app.config import settings
 
 _service: Optional[Resource] = None
+
+
+def _is_transient_http_error(exc: BaseException) -> bool:
+    return isinstance(exc, HttpError) and exc.resp is not None and exc.resp.status in (429, 500, 502, 503, 504)
+
+
+# Applied only to reads and delete - both idempotent/safe to retry. NOT applied to insert_event:
+# if a write's response is lost after the server already processed it, blindly retrying would
+# risk creating a duplicate calendar event, which is worse than surfacing the failure and letting
+# the user explicitly ask again (already handled by manager.py's graceful-degradation path).
+_retry_transient = retry(
+    retry=retry_if_exception(_is_transient_http_error),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=4),
+    reraise=True,
+)
 
 
 def _tz() -> ZoneInfo:
@@ -48,11 +66,13 @@ def get_calendar_service() -> Resource:
     return _service
 
 
+@_retry_transient
 def list_calendars() -> list[dict]:
     service = get_calendar_service()
     return service.calendarList().list().execute().get("items", [])
 
 
+@_retry_transient
 def find_event_by_name(
     name: str,
     time_min: Optional[dt.datetime] = None,
@@ -72,6 +92,7 @@ def find_event_by_name(
     return _to_simple_event(events[0])
 
 
+@_retry_transient
 def find_last_event_of_day(day: dt.date, calendar_id: str = "primary") -> Optional[dict]:
     service = get_calendar_service()
     day_start = _localize(dt.datetime.combine(day, dt.time.min)).isoformat()
@@ -88,6 +109,7 @@ def find_last_event_of_day(day: dt.date, calendar_id: str = "primary") -> Option
     return _to_simple_event(events[-1])
 
 
+@_retry_transient
 def freebusy(start: dt.datetime, end: dt.datetime, calendar_id: str = "primary") -> list[dict]:
     service = get_calendar_service()
     body = {
@@ -104,6 +126,9 @@ def freebusy(start: dt.datetime, end: dt.datetime, calendar_id: str = "primary")
 
 
 def insert_event(summary: str, start: dt.datetime, end: dt.datetime, calendar_id: str = "primary") -> dict:
+    """Deliberately NOT retried automatically - see the module-level note on _retry_transient.
+    A transient failure here surfaces immediately via manager.py's graceful-degradation path,
+    letting the user explicitly ask again rather than risking a duplicate booking."""
     service = get_calendar_service()
     body = {
         "summary": summary,
@@ -113,11 +138,13 @@ def insert_event(summary: str, start: dt.datetime, end: dt.datetime, calendar_id
     return service.events().insert(calendarId=calendar_id, body=body).execute()
 
 
+@_retry_transient
 def delete_event(event_id: str, calendar_id: str = "primary") -> None:
     service = get_calendar_service()
     service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
 
 
+@_retry_transient
 def get_event(event_id: str, calendar_id: str = "primary") -> dict:
     """Unambiguous lookup by the exact id insert_event() returned - unlike find_event_by_name,
     this can never accidentally match a different same-named event nearby (found the hard way:

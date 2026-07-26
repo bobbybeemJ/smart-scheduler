@@ -13,8 +13,21 @@ from pydantic import BaseModel, Field
 
 
 class TimePreference(str, Enum):
+    """Hour-of-day preference within a given day (e.g. "not too early in the morning") -
+    distinct from WeekPosition, which is about which days of the range to favor."""
+
     NOT_TOO_EARLY = "not_too_early"
     NOT_TOO_LATE = "not_too_late"
+
+
+class WeekPosition(str, Enum):
+    """Which part of the date range to favor (e.g. "late next week" means toward Thu/Fri, not
+    "not too late in the day"). Found via testing the assignment's own example phrase - without
+    this, "late next week" was being conflated with TimePreference.NOT_TOO_LATE, which actually
+    means "prefer earlier hours," the opposite dimension entirely."""
+
+    EARLY_IN_RANGE = "early_in_range"
+    LATE_IN_RANGE = "late_in_range"
 
 
 class CalendarArithmeticExpr(str, Enum):
@@ -50,13 +63,16 @@ class CalendarArithmetic(BaseModel):
 
 
 class RelativeRangeWithExclusions(BaseModel):
-    """"next week, not too early, not on Wednesday" """
+    """"next week, not too early, not on Wednesday" - also covers "sometime late next week"
+    via week_position (which days of the range) as distinct from time_preference (which hours
+    within a day)."""
 
     kind: Literal["relative_range_with_exclusions"] = "relative_range_with_exclusions"
     duration_minutes: Optional[int] = None
     range: Literal["next_week", "this_week"] = "next_week"
     exclude_weekdays: list[str] = Field(default_factory=list)
     time_preference: Optional[TimePreference] = None
+    week_position: Optional[WeekPosition] = None
 
 
 class ContextualReference(BaseModel):

@@ -22,7 +22,7 @@ from app.dateresolve.resolver import (
 )
 from app.dialogue import templates
 from app.llm.client import LLMExtractionError, extract_intent
-from app.schemas import ContextualReference, DurationUpdate
+from app.schemas import ContextualReference, DurationUpdate, SimpleDateTime
 from app.scheduling.ranking import rank_candidates
 from app.scheduling.slot_finder import FreebusyFn, find_available_slots_with_fallback
 from app.state import SessionState
@@ -176,9 +176,18 @@ class DialogueManager:
         if self.state.established_expression is None:
             return templates.ask_duration_for_untethered_update()
 
+        # Distinguish a genuine mid-conversation *correction* ("actually we need a full hour
+        # now", duration was already set) from simply *answering* an earlier ask_duration()
+        # prompt for the first time (duration was never set yet) - found via testing the
+        # assignment's own example flow ("How long should the meeting be?" -> "1 hour."), which
+        # was announcing it was "keeping the day/time preference you already gave me" when none
+        # had ever been given.
+        is_correction = self.state.duration_minutes is not None
         self.state.established_expression.duration_minutes = duration_minutes
         self.state.duration_minutes = duration_minutes
-        return templates.duration_updated(duration_minutes) + self._search_and_reply()
+        if is_correction:
+            return templates.duration_updated(duration_minutes) + self._search_and_reply()
+        return self._search_and_reply()
 
     def _handle_contextual_reference(self, intent: ContextualReference) -> list[str]:
         try:
@@ -211,6 +220,14 @@ class DialogueManager:
             return templates.ask_duration()
         except UnresolvedReferenceError as exc:
             self.last_turn_timing.resolve_ms = sw.elapsed_ms
+            if isinstance(self.state.established_expression, SimpleDateTime):
+                # A SimpleDateTime that fails to parse almost always means the user hasn't
+                # actually stated a day/time yet (e.g. "I need to schedule a meeting" gives the
+                # LLM nothing to anchor to, but the schema still forces it to pick some "kind") -
+                # found via testing the assignment's own example conversation, which opens with
+                # exactly that phrase. Ask for day/time, don't claim we "couldn't find" a
+                # reference - that wording belongs to actual named-event lookups instead.
+                return templates.ask_day_time_preference()
             return templates.could_not_find_reference(str(exc))
         except Exception:
             # Graceful degradation: a real Calendar/network failure inside resolve()'s event

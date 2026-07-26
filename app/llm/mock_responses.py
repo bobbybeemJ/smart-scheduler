@@ -51,6 +51,15 @@ _CANNED_RESPONSES: list[tuple[str, dict]] = [
         },
     ),
     (
+        "late next week",
+        {
+            "kind": "relative_range_with_exclusions",
+            "duration_minutes": None,
+            "range": "next_week",
+            "week_position": "late_in_range",
+        },
+    ),
+    (
         "usual sync-up",
         {
             "kind": "contextual_reference",

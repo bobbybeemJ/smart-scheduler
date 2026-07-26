@@ -32,6 +32,13 @@ is present) and the user's message ONLY changes the duration - with no new day/t
 at all (e.g. "actually we need a full hour now", "let's make it 45 minutes instead") - use \
 "duration_update" with just the new duration_minutes. Do not restate or guess the day/time \
 constraints; the dialogue layer keeps those unchanged on its own.
+6. For "relative_range_with_exclusions", time_preference and week_position are DIFFERENT things - \
+do not conflate them. time_preference ("not_too_early"/"not_too_late") is about the HOUR within a \
+single day (morning vs evening). week_position ("early_in_range"/"late_in_range") is about WHICH \
+DAYS of the range to favor (start of next week vs end of next week). "sometime late next week" \
+means week_position="late_in_range" - it says nothing about what hour of the day, so leave \
+time_preference null. "not too early in the morning" means time_preference="not_too_early" and \
+says nothing about which days, so leave week_position null. A phrase can set both, one, or neither.
 """
 
 

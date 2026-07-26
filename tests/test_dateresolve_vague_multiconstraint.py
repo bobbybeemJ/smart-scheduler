@@ -9,7 +9,7 @@ config.settings.use_mock_llm = True
 
 from app.dateresolve.resolver import resolve  # noqa: E402
 from app.llm.client import extract_intent  # noqa: E402
-from app.schemas import RelativeRangeWithExclusions, TimePreference  # noqa: E402
+from app.schemas import RelativeRangeWithExclusions, TimePreference, WeekPosition  # noqa: E402
 
 NOW = dt.datetime(2026, 7, 22, 9, 0)  # Wednesday
 
@@ -55,3 +55,20 @@ def test_not_too_early_preference_applies_to_every_day_in_the_range_not_just_the
     assert dt.date(2026, 7, 29) not in by_day  # Wednesday fully excluded
     for day, day_slots in by_day.items():
         assert min(s.start.hour for s in day_slots) >= 10, f"{day} had a slot before the 10am floor"
+
+
+def test_late_next_week_narrows_days_not_hours():
+    """"sometime late next week" - week_position is a DIFFERENT dimension from time_preference
+    (hour-of-day). Found via testing the assignment's own example phrase: an earlier version
+    conflated "late next week" with "not too late in the day," which actually means the
+    opposite thing (prefer earlier hours) - a real semantic mismatch, not just a missing case."""
+    intent = extract_intent("sometime late next week")
+    assert isinstance(intent, RelativeRangeWithExclusions)
+    assert intent.week_position == WeekPosition.LATE_IN_RANGE
+    assert intent.time_preference is None  # must NOT be conflated with hour-of-day
+    intent.duration_minutes = 30
+
+    constraints = resolve(intent, NOW)
+    window = constraints.search_windows[0]
+    assert window.start.date() == dt.date(2026, 7, 30)  # Thursday, not Monday
+    assert window.end.date() == dt.date(2026, 7, 31)  # Friday
