@@ -10,6 +10,7 @@ from app import config
 config.settings.use_mock_llm = True
 
 from app.dialogue.manager import DialogueManager  # noqa: E402
+from app.schemas import SimpleDateTime  # noqa: E402
 
 NOW = dt.datetime(2026, 7, 22, 9, 0)  # Wednesday
 
@@ -44,6 +45,44 @@ def test_mid_conversation_duration_change_keeps_day_time_context():
     assert constraints.excluded_weekdays == [2]  # Wednesday
     reply_text = " ".join(second_reply).lower()
     assert "60" in reply_text or "hour" in reply_text
+
+
+def test_duration_carries_over_to_a_fresh_day_time_pivot_without_asking_again():
+    """Found via real usage: a user who pivots to a new day ("Tuesday morning" after "Thursday
+    morning" didn't work out) was being asked for duration all over again on every single pivot,
+    even though it was already established, because the new intent is a fresh SimpleDateTime
+    (duration_minutes=None on that object) rather than an explicit duration_update. Carrying over
+    self.state.duration_minutes deterministically fixes this regardless of how the LLM classifies
+    the pivot."""
+    manager = DialogueManager(now_fn=lambda: NOW, freebusy_fn=_always_free)
+    manager.handle_turn("Tuesday at 2pm")
+    assert manager.state.duration_minutes == 30
+    assert manager.state.phase == "confirming"
+
+    reply = manager.handle_turn("thursday morning")
+
+    assert manager.state.duration_minutes == 30
+    assert manager.state.established_expression.duration_minutes == 30
+    assert manager.state.phase == "confirming"  # searched immediately, did not ask for duration again
+    reply_text = " ".join(reply).lower()
+    assert "how long" not in reply_text
+
+
+def test_duration_update_with_unresolvable_day_time_does_not_claim_to_keep_it():
+    """Found via real usage: correcting the duration while the day/time was already
+    unparseable produced an incoherent double message - "keeping the day/time preference you
+    already gave me" immediately followed by "what day or time works for you?" This must only
+    claim to be keeping the existing preference when a search actually ran on it, not when it
+    turns out there was nothing usable to keep."""
+    manager = DialogueManager(now_fn=lambda: NOW, freebusy_fn=_always_free)
+    manager.state.established_expression = SimpleDateTime(duration_minutes=30, raw_phrase="garbage unparseable phrase")
+    manager.state.duration_minutes = 30
+
+    reply = manager.handle_turn("actually we need a full hour now")
+
+    reply_text = " ".join(reply).lower()
+    assert "keeping the day/time preference" not in reply_text
+    assert "day" in reply_text or "time" in reply_text
 
 
 def test_duration_update_with_no_established_context_asks_instead_of_crashing():

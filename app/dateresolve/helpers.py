@@ -35,14 +35,30 @@ def day_part_in_phrase(phrase: str) -> Optional[str]:
 
 
 def strip_day_part(phrase: str) -> str:
+    """Removes the day-part word AND any surrounding "in (the)"/"at (the)" preposition as one
+    unit - found via real usage: "next Thursday in the morning" only had the bare word "morning"
+    stripped, leaving "next Thursday in the" dangling. That trailing "in the" broke the
+    weekday-only fast parser (which requires the remainder to be just the weekday name), forcing
+    a fallback to dateparser on a phrase dateparser couldn't handle either."""
     day_part = day_part_in_phrase(phrase)
     if day_part is None:
         return phrase
-    return re.sub(day_part, "", phrase, flags=re.IGNORECASE).strip()
+    pattern = re.compile(rf"\b(in|during|at)?\s*(the)?\s*{day_part}\b", re.IGNORECASE)
+    return pattern.sub("", phrase).strip()
 
 
 _WEEKDAY_PREFIX_RE = re.compile(r"^(next|this|coming)?\s*(week)?\s*(on)?\s*", re.IGNORECASE)
-_TIME_TOKEN_RE = re.compile(r"\b\d{1,2}(:\d{2})?\s*(am|pm)\b|\b\d{1,2}:\d{2}\b", re.IGNORECASE)
+_TIME_TOKEN_RE = re.compile(r"\b\d{1,2}(:\d{2})?\s*(am|pm)\b|\b\d{1,2}:\d{2}\b|\b\d{1,2}\s*o'?clock\b", re.IGNORECASE)
+
+
+def strip_weekday_prefix(phrase: str) -> str:
+    """Removes a leading "next"/"this"/"coming"/"week"/"on" combination (in any of the
+    supported orders) - dateparser is unreliable on this prefix combined with ANYTHING trailing
+    it, not just a bare weekday name: confirmed directly that "next Wednesday 3:00" returns None
+    while the otherwise-identical "Wednesday 3:00" (no prefix) parses correctly. Used both by
+    try_parse_weekday_only (which needs a bare weekday name after stripping) and as a
+    pre-processing step before handing a weekday+time phrase to dateparser."""
+    return _WEEKDAY_PREFIX_RE.sub("", phrase).strip()
 
 
 def try_parse_weekday_only(now: dt.datetime, phrase: str) -> Optional[dt.date]:
@@ -51,7 +67,7 @@ def try_parse_weekday_only(now: dt.datetime, phrase: str) -> Optional[dt.date]:
     to parse that exact wording, returning None) via our own deterministic weekday arithmetic.
     dateparser is also empirically unreliable on plain "next <weekday>" phrasing (observed
     returning None for it), so bare weekday references never go through dateparser at all."""
-    candidate = _WEEKDAY_PREFIX_RE.sub("", phrase).strip()
+    candidate = strip_weekday_prefix(phrase)
     try:
         target_weekday = weekday_index(candidate)
     except ValueError:
@@ -62,6 +78,24 @@ def try_parse_weekday_only(now: dt.datetime, phrase: str) -> Optional[dt.date]:
 
 def phrase_has_explicit_time(phrase: str) -> bool:
     return bool(_TIME_TOKEN_RE.search(phrase))
+
+
+_AMPM_RE = re.compile(r"\b(am|pm|a\.m\.|p\.m\.)\b", re.IGNORECASE)
+
+
+def has_explicit_ampm(phrase: str) -> bool:
+    return bool(_AMPM_RE.search(phrase))
+
+
+_OCLOCK_RE = re.compile(r"\b(\d{1,2})\s*o'?clock\b", re.IGNORECASE)
+
+
+def normalize_oclock(phrase: str) -> str:
+    """"3 o'clock" -> "3:00" - found via real usage: dateparser cannot parse "o'clock" phrasing
+    at all (confirmed directly - returns None even for "next Wednesday at 3 o'clock"), despite
+    handling the equivalent numeric "3:00" just fine. "N o'clock" is a very natural way to say a
+    time out loud, so STT transcripts containing it are common, not an edge case."""
+    return _OCLOCK_RE.sub(lambda m: f"{m.group(1)}:00", phrase)
 
 
 _WEEKDAY_NAME_RE = re.compile(r"\b(" + "|".join(WEEKDAY_NAMES) + r")\b", re.IGNORECASE)

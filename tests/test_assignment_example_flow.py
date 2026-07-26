@@ -56,7 +56,7 @@ def test_bare_scheduling_request_asks_for_day_time_not_a_confusing_error():
     manager.state.established_expression = SimpleDateTime(duration_minutes=60, raw_phrase="meeting")
     manager.state.duration_minutes = 60
 
-    reply = manager._search_and_reply()
+    reply, _ = manager._search_and_reply()
 
     reply_text = " ".join(reply).lower()
     assert "day" in reply_text or "time" in reply_text

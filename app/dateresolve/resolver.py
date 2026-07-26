@@ -243,15 +243,38 @@ def _resolve_dynamic_buffer(
     )
 
 
+_MAX_RAW_PHRASE_WORDS = 12
+
+
 def _resolve_simple_datetime(expr: SimpleDateTime, now: dt.datetime) -> ResolvedConstraints:
-    day_part = helpers.day_part_in_phrase(expr.raw_phrase)
-    remainder = helpers.strip_day_part(expr.raw_phrase) if day_part else expr.raw_phrase
+    if len(expr.raw_phrase.split()) > _MAX_RAW_PHRASE_WORDS:
+        # Defends against a real, if intermittent, failure mode of the free-tier LLM: instead of
+        # a short clean phrase like "next Wednesday at 3pm," it occasionally emits its own
+        # leaked reasoning into raw_phrase instead ("...removed duration text as required rule 2
+        # says raw_phrase must not contain..." - an actual observed sample, confirmed reproducible
+        # roughly 1 in 4 tries on one specific phrase). A genuine date/time phrase is never this
+        # long, and dateparser might otherwise latch onto some date-like fragment buried in all
+        # that noise and resolve to an unpredictable date instead of failing cleanly - reject it
+        # outright and ask again rather than gamble on what dateparser does with it.
+        raise UnresolvedReferenceError(f"raw_phrase is implausibly long, rejecting rather than guessing: {expr.raw_phrase!r}")
+
+    raw_phrase = helpers.normalize_oclock(expr.raw_phrase)
+    day_part = helpers.day_part_in_phrase(raw_phrase)
+    remainder = helpers.strip_day_part(raw_phrase) if day_part else raw_phrase
 
     base_date = helpers.try_parse_weekday_only(now, remainder)
     explicit_time: Optional[tuple[int, int]] = None
 
     if base_date is None:
-        parsed = dateparser.parse(remainder, settings={"RELATIVE_BASE": now, "PREFER_DATES_FROM": "future"})
+        # dateparser is unreliable on a "next/this/coming <weekday>" prefix combined with
+        # anything trailing it too, not just a bare weekday name (confirmed: "next Wednesday
+        # 3:00" -> None, while the otherwise-identical "Wednesday 3:00" parses fine) - strip the
+        # same prefix try_parse_weekday_only already strips, but only when a weekday is actually
+        # named (never touch phrases like "in 3 days" that don't have one).
+        dateparser_input = remainder
+        if helpers.extract_stated_weekday(remainder) is not None:
+            dateparser_input = helpers.strip_weekday_prefix(remainder)
+        parsed = dateparser.parse(dateparser_input, settings={"RELATIVE_BASE": now, "PREFER_DATES_FROM": "future"})
         if parsed is None:
             raise UnresolvedReferenceError(f"Could not parse date/time phrase: {expr.raw_phrase!r}")
         base_date = parsed.date()
@@ -270,15 +293,29 @@ def _resolve_simple_datetime(expr: SimpleDateTime, now: dt.datetime) -> Resolved
         # differing time (or an explicit am/pm/colon token in the text) means one was stated.
         if helpers.phrase_has_explicit_time(remainder) or (parsed.hour, parsed.minute) != (now.hour, now.minute):
             explicit_time = (parsed.hour, parsed.minute)
+            if day_part is not None and not helpers.has_explicit_ampm(expr.raw_phrase):
+                # An hour stated as bare "3 o'clock" (no am/pm) is ambiguous on its own -
+                # normalize_oclock turns it into "3:00", which dateparser/dt.time both default
+                # to AM. Found via real usage: "3 o'clock in the afternoon" was resolving to
+                # 3:00 AM, silently dropping the "afternoon" qualifier that was the only thing
+                # actually disambiguating it. The day-part word IS that disambiguation - use it.
+                hour, minute = explicit_time
+                if day_part in ("afternoon", "evening", "night") and 1 <= hour <= 11:
+                    explicit_time = (hour + 12, minute)
 
-    if day_part is not None:
-        start_hour, end_hour = helpers.DAY_PART_WINDOWS[day_part]
-        start, end = helpers.business_hours_window(base_date, start_hour, end_hour)
-    elif explicit_time is not None:
+    if explicit_time is not None:
+        # Checked before day_part - found via real usage: "3 o'clock in the afternoon" states
+        # both an exact time AND a day-part word for the same moment (not two different
+        # constraints), but day_part being checked first meant the specific "3pm" was silently
+        # discarded in favor of a generic noon-start afternoon window. An explicit time is
+        # always more precise than a vague day-part block, so it wins whenever both are present.
         start = dt.datetime.combine(base_date, dt.time(hour=explicit_time[0], minute=explicit_time[1]))
         _, end = helpers.business_hours_window(base_date)
         if end <= start:
             end = start + dt.timedelta(hours=1)
+    elif day_part is not None:
+        start_hour, end_hour = helpers.DAY_PART_WINDOWS[day_part]
+        start, end = helpers.business_hours_window(base_date, start_hour, end_hour)
     else:
         start, end = helpers.business_hours_window(base_date)
 

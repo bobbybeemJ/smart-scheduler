@@ -125,6 +125,13 @@ def test_fast_path_confirmation_does_not_swallow_a_message_with_its_own_new_time
     assert _parse_slot_selection("book it for a totally different time with extra words", num_offered=3) is None
     assert _parse_slot_selection("book it", num_offered=3) == 0  # short bare confirmations still fast-path
 
+    # "book it for 12:00 p.m." - only 5 words, so an earlier length-only version of this guard
+    # still let it through; a digit anywhere is an unambiguous, length-independent signal that a
+    # real new time reference is present, found via real usage booking the wrong slot this way.
+    assert _parse_slot_selection("book it for 12:00 p.m.", num_offered=3) is None
+    assert _parse_slot_selection("option 2", num_offered=3) == 1  # digit-based ordinals still work
+    assert _parse_slot_selection("2nd", num_offered=3) == 1
+
     manager = DialogueManager(now_fn=lambda: NOW, freebusy_fn=_always_free)
     manager.handle_turn("Tuesday at 2pm")
     assert manager.state.phase == "confirming"

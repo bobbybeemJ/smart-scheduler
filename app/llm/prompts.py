@@ -1,107 +1,48 @@
 """The only place natural language touches an LLM in this whole system. The model's job ends
 at producing a schema-valid TemporalExpression - it never computes a date or writes the user
--facing reply (that's app/dialogue/templates.py, plain Python string assembly)."""
+-facing reply (that's app/dialogue/templates.py, plain Python string assembly).
+
+SYSTEM_INSTRUCTION below is deliberately short and purely imperative - no rationale, no history,
+no "found via testing X" narration. Every extra sentence there is tokens spent on every single
+call, and a verbose, narrative version of this prompt was observed making this free-tier model
+(gemini-flash-lite) drift into discussing its own reasoning instead of just producing the
+answer - one real response leaked '...as required rule 2 says raw_phrase must not contain...'
+directly into a structured output field instead of the field's actual value. Keep this file's
+rule rationale in the comments below the string, not inside it:
+
+- Never invent a date/time/duration - null means "ask the user," not "guess."
+- A single named day ("tomorrow," a weekday, a specific date) is simple_datetime even when
+  phrased with "next week" ("next week on Tuesday" = simple_datetime) - relative_range_with_
+  exclusions has no field for "just this one weekday," so a single day put there is silently
+  lost and the whole week gets searched instead.
+- calendar_arithmetic's ordinal/day_type must reflect exactly what's said, never default to
+  whatever combination used to be the only one supported - a schema with only one representable
+  answer produces a confidently wrong one instead of an error when the user asks for something
+  else. Same for week_offset/month_offset defaulting to a "common" value.
+- slot_decision must yield to a fresh request whenever the message states its own new day/time/
+  duration, even if it also contains a confirming word like "book" - otherwise the wrong
+  (already-offered) slot gets booked instead of the one actually just requested.
+- dynamic_buffer's after_time must never receive anything but a clock time or null - a named
+  event/person belongs in reference_event_name (buffer_source="named_event") instead.
+"""
 
 from __future__ import annotations
 
 import json
 from typing import Optional
 
-SYSTEM_INSTRUCTION = """You are the intent-extraction component of a voice scheduling assistant. \
-Your ONLY job is to extract structured scheduling intent from the user's message into the given \
-response schema. You never see a calendar and you never compute an actual date.
+SYSTEM_INSTRUCTION = """Extract structured scheduling intent from the user's message into the given schema. Never compute a real calendar date yourself - only extract raw fields (weekday names, hour strings, day/week/month offsets, event names). All date arithmetic happens afterward in Python.
 
-Critical rules:
-1. NEVER compute or invent a resolved calendar date yourself. Only extract the raw fields the \
-schema asks for (a weekday name like "Friday", an hour string like "18:00", a day-offset count, \
-an event name as spoken). All real date arithmetic happens separately in deterministic Python \
-code - that separation is what makes this reliable, and it is not your job to do it.
-2. If duration_minutes is not explicitly stated anywhere in the user's message, and is not \
-already known from the condensed session state provided to you, you MUST leave duration_minutes \
-as null. Do NOT invent a "reasonable-sounding" default like 30. Guessing here is a serious error \
-- the correct behavior is to leave it null so the assistant can ask the user how long the \
-meeting should be.
-3. Choose exactly one schema variant ("kind") that best matches the user's phrasing. Only use \
-"contextual_reference" when the user refers to a previous/habitual meeting by description (e.g. \
-"our usual sync-up", "the normal meeting"), not for a fresh request with its own constraints. If \
-the user names ONE specific day - a weekday name, "tomorrow," a specific date - use \
-"simple_datetime", even if the phrase also happens to include words like "next week" ("next week \
-on Tuesday" means "next Tuesday" - one specific day, not a range). Reserve \
-"relative_range_with_exclusions" for when the user actually wants a RANGE of days searched \
-(exclusions across several candidate days, "sometime next week" with no single day named). \
-relative_range_with_exclusions has no field for "restrict to exactly this one weekday" - if you \
-put a single-day request there, that day is silently lost and the whole week gets searched \
-instead, which is wrong.
-4. Use the condensed session state only to fill in duration_minutes when the user is clearly \
-continuing an already-established conversation about a meeting whose duration was given earlier \
-- never use it to fill in a duration for an unrelated new request.
-5. If the condensed session state shows a meeting is already established (an "established_constraint" \
-is present) and the user's message ONLY changes the duration - with no new day/time information \
-at all (e.g. "actually we need a full hour now", "let's make it 45 minutes instead") - use \
-"duration_update" with just the new duration_minutes. Do not restate or guess the day/time \
-constraints; the dialogue layer keeps those unchanged on its own.
-6. For "relative_range_with_exclusions", time_preference and week_position are DIFFERENT things - \
-do not conflate them. time_preference ("not_too_early"/"not_too_late") is about the HOUR within a \
-single day (morning vs evening). week_position ("early_in_range"/"late_in_range") is about WHICH \
-DAYS of the range to favor (start of next week vs end of next week). "sometime late next week" \
-means week_position="late_in_range" - it says nothing about what hour of the day, so leave \
-time_preference null. "not too early in the morning" means time_preference="not_too_early" and \
-says nothing about which days, so leave week_position null. A phrase can set both, one, or neither.
-7. "relative_range_with_exclusions" also has week_offset: a signed integer counting calendar \
-weeks from the CURRENT week. 0 = "this week", 1 = "next week", 2 = "the week after next" / "two \
-weeks from now" / "in two weeks", 3 = "in three weeks", and so on. Use this field for ANY \
-"[in/this/next] N week(s)" phrasing, however it's worded - do not fall back to a different \
-schema kind just because the phrase isn't exactly "this week" or "next week". If the user refers \
-to a week that has already passed (e.g. "last week", week_offset would be negative), still \
-extract it honestly as the negative number they meant - it is not your job to judge whether a \
-past date makes sense for scheduling; leave that entirely to the Python system that resolves it.
-8. "event_relative" and "deadline_before" both have an optional earliest_time field: an HH:MM \
-(24-hour) floor for phrases like "not before 11am" or "nothing before 9am". Only set it when a \
-literal hour is stated or unambiguously implied - never invent one. Leave it null for vague \
-phrasing like "not too early" (neither schema has a field for that vague version; if a user says \
-something this vague for one of these two kinds, just leave earliest_time null rather than \
-guessing a specific hour).
-9. "calendar_arithmetic" ("the last weekday of this month," "the second Tuesday of next month," \
-"the last Friday of the month") is built from three independent parts - fill in exactly what the \
-user said, don't default any of them:
-   - ordinal: first/second/third/fourth/fifth/last - whichever occurrence they meant. "fifth" is \
-a real option (some months do have a 5th Monday, etc.) - don't silently round it down to fourth.
-   - day_type: "weekday" means any Mon-Fri business day (this is what "the last weekday of the \
-month" means - it is NOT the same thing as "the last Friday of the month," which is a specific \
-day-of-week). Otherwise day_type is the specific weekday name the user said (e.g. "friday").
-   - month_offset: signed integer, same idea as week_offset above - 0 = this month, 1 = next \
-month, 2 = the month after next, etc.
-   Never default ordinal to "last" or day_type to "weekday" just because those used to be the \
-only supported combination - if the user said "first" or named a specific weekday, extracting \
-anything else would silently give a completely wrong date with no error at all, which is worse \
-than any other mistake you could make here.
-10. If 1-3 candidate time slots were JUST offered to the user (the condensed session state's \
-"phase" is "confirming" and "num_offered_candidates" is greater than 0) and the message is the \
-user responding to that SAME offer - confirming, picking one, or rejecting all of them, with NO \
-new specific day/time/duration of their own - use "slot_decision", not any date/time-extraction \
-kind. decision is "confirm_top" (accepting whichever was offered, or a clear affirmative with no \
-specific pick), "select_index" (they named a specific ALREADY-OFFERED one - set selected_index \
-to the 0-based position they meant), or "reject_all" (they don't want any of the offered \
-options). Do not use this kind if "phase" is not "confirming" - a fresh scheduling request always \
-gets its own proper kind instead, even if it superficially sounds like an answer. CRITICALLY: if \
-the message states its OWN specific day/time/duration that's different from what was offered \
-(e.g. "book it for July 28 at 11am" when 9am/9:30am/10am were offered) - that is a FRESH request \
-for that new day/time, not a slot_decision, even though it also contains booking-sounding words \
-like "book" - extract it as simple_datetime (or whatever kind fits) with the new information, not \
-as confirm_top. Silently keeping the old offered time when the user just stated a different one \
-would book the wrong slot.
-11. If the message isn't a scheduling request at all - cancelling something, small talk, a \
-question unrelated to finding/booking a meeting slot - use "out_of_scope". Do not force it into \
-any other kind just because the schema requires you to pick one; "out_of_scope" exists exactly \
-so you're never stuck doing that.
-12. "dynamic_buffer" has after_time (an HH:MM clock-time floor, e.g. "after 7pm") and \
-buffer_minutes/buffer_source (a floor relative to another event) as TWO INDEPENDENT constraints \
-that can combine - do not conflate them. after_time is optional: if the message states no \
-explicit clock time at all and is purely "some time after event X ends," leave after_time null - \
-do NOT put an event name, a person's name, or anything else non-numeric into after_time; it must \
-only ever be a clock time or null. buffer_source is "last_meeting_today" for "my last meeting" \
-phrasing, or "named_event" when the user names a specific event/person to buffer after (e.g. "my \
-call with Sarah") - in that case set reference_event_name to what they named.
+Rules:
+- duration_minutes: null unless stated in this message, or the session state shows it's already established for the meeting being continued. Extract it wherever it appears in the sentence, before or after the date/time, even trailing after a day-part word - never leave duration wording sitting inside raw_phrase instead. Examples: "next Thursday for 30 minutes" -> duration_minutes=30, raw_phrase="next Thursday". "next Wednesday afternoon for 45 minutes" -> duration_minutes=45, raw_phrase="next Wednesday afternoon" (not raw_phrase="next Wednesday afternoon for 45 minutes").
+- Pick exactly one kind. contextual_reference is only for a reference to a previous/habitual meeting by description ("our usual sync-up"), never for a fresh request with its own constraints. A single named day (a weekday, "tomorrow", a specific date) is simple_datetime, even when phrased with "next week" - relative_range_with_exclusions is only for an actual range with no single day named.
+- duration_update: only when session state shows an established meeting and the message changes ONLY the duration, nothing else about day/time.
+- relative_range_with_exclusions: week_offset is signed (0=this week, 1=next, 2=the week after next, -1=last week, etc - any "N week(s)" phrasing maps here). time_preference (not_too_early/not_too_late) is a vague hour-of-day preference; week_position (early_in_range/late_in_range) is which days of the range to favor. These are independent - set only what's actually implied, leave the other null.
+- event_relative / deadline_before: earliest_time is an HH:MM floor (e.g. "not before 11am") - set only when a literal hour is stated or unambiguously implied, never invented.
+- calendar_arithmetic: ordinal (first/second/third/fourth/fifth/last) x day_type ("weekday" = any Mon-Fri business day, or a specific weekday name) x month_offset (signed, same idea as week_offset). Fill in exactly what the user said for each part independently - never default to a previously-common combination.
+- slot_decision: only when session state's phase is "confirming" and the message is purely reacting to the offered slots (confirm_top / select_index with the 0-based position / reject_all), with no new day/time/duration of its own. A message stating its own new specific day/time/duration is a fresh request instead (its own proper kind), even if it also contains a word like "book".
+- out_of_scope: anything that isn't a scheduling request at all - cancellations, unrelated questions, small talk.
+- dynamic_buffer: after_time (an HH:MM clock-time floor) and buffer_minutes/buffer_source (a floor relative to another event) are independent and can combine. after_time must be a clock time or null - never a name. buffer_source is "last_meeting_today", "next_meeting_today", or "named_event" (with reference_event_name set to what was named).
 """
 
 

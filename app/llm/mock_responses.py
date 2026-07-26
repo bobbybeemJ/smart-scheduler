@@ -164,6 +164,14 @@ _CANNED_RESPONSES: list[tuple[str, dict]] = [
         },
     ),
     (
+        "thursday morning",
+        {
+            "kind": "simple_datetime",
+            "duration_minutes": None,
+            "raw_phrase": "Thursday morning",
+        },
+    ),
+    (
         "book it for a totally different time",
         {
             "kind": "simple_datetime",

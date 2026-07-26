@@ -82,19 +82,25 @@ def _parse_slot_selection(text: str, num_offered: int) -> Optional[int]:
     confirmation at all (in which case the caller should fall through to normal extraction -
     e.g. the user changed their mind about the day/time instead of picking an option).
 
-    Longer messages are deliberately never matched here, even if they happen to contain a
-    phrase like "book it" - found via testing real usage: "book it for July 28 at 11am" contains
-    "book it" as a substring and was matching this fast path, silently booking whichever slot was
-    already offered and discarding the different time the user just stated. Anything longer than
-    a short handful of words is far more likely to carry new information than to be a bare
-    confirmation, so it's left to the LLM's slot_decision classification instead, which already
-    knows to treat a message with its own new day/time as a fresh request, not a confirmation."""
+    The bare-confirmation fallback (not the ordinal check above it) is deliberately never
+    matched for a message that's either long or contains a digit, even if it happens to contain
+    a phrase like "book it" - found via testing real usage twice: "book it for July 28 at 11am"
+    (long) and "book it for 12:00 p.m." (short - only 5 words, still slipped past an
+    earlier length-only version of this guard) both contain "book it" as a substring and were
+    matching this fast path, silently booking whichever slot was already offered and discarding
+    the different time actually stated. A digit is an unambiguous, length-independent signal
+    that a real new date/time reference is present (a day-of-month, an hour, a year) - ordinal
+    words like "second"/"third" don't contain digits, and the ordinal check above already
+    returns before reaching this one for digit-based selectors like "2nd"/"option 2", so this
+    doesn't block those. Anything disqualified here is left to the LLM's slot_decision
+    classification instead, which already knows to treat a message with its own new day/time as
+    a fresh request, not a confirmation."""
     normalized = text.strip().lower().rstrip(".!")
-    if len(normalized.split()) > _FAST_PATH_MAX_WORDS:
-        return None
     for phrase, index in _ORDINAL_SELECTORS.items():
         if phrase in normalized and index < num_offered:
             return index
+    if len(normalized.split()) > _FAST_PATH_MAX_WORDS or any(ch.isdigit() for ch in normalized):
+        return None
     if _looks_like_confirmation(normalized):
         return 0  # bare "yes"/"book it" etc. always means the top-ranked option
     return None
@@ -176,9 +182,22 @@ class DialogueManager:
         self.state.established_expression = intent
         self.state.top_candidates = []
         if intent.duration_minutes is None:
-            return templates.ask_duration()
+            if self.state.duration_minutes is not None:
+                # Carry over a duration already established earlier in this conversation, even
+                # though this new intent is a fresh day/time rather than an explicit
+                # duration_update - found via real usage: a user who pivots to a new day
+                # ("Tuesday morning" / "our usual sync-up next week" -> later "Thursday") was
+                # being asked for duration all over again on every single pivot, even when it
+                # was already known, because the LLM has no reliable way to always recognize a
+                # bare new day/time as "still the same meeting." Deterministically carrying over
+                # what's already known doesn't depend on the LLM getting that judgment call right
+                # every time.
+                intent.duration_minutes = self.state.duration_minutes
+            else:
+                return templates.ask_duration()
         self.state.duration_minutes = intent.duration_minutes
-        return self._search_and_reply()
+        reply, _ = self._search_and_reply()
+        return reply
 
     def _handle_duration_update(self, duration_minutes: int) -> list[str]:
         if self.pending_contextual_reference is not None:
@@ -190,7 +209,8 @@ class DialogueManager:
             if self.state.established_expression is None:
                 return templates.ask_day_time_preference()
             self.state.established_expression.duration_minutes = duration_minutes
-            return self._search_and_reply()
+            reply, _ = self._search_and_reply()
+            return reply
 
         if self.state.established_expression is None:
             return templates.ask_duration_for_untethered_update()
@@ -204,9 +224,14 @@ class DialogueManager:
         is_correction = self.state.duration_minutes is not None
         self.state.established_expression.duration_minutes = duration_minutes
         self.state.duration_minutes = duration_minutes
-        if is_correction:
-            return templates.duration_updated(duration_minutes) + self._search_and_reply()
-        return self._search_and_reply()
+        reply, resolved = self._search_and_reply()
+        if is_correction and resolved:
+            # Only claim to be "keeping the day/time preference you already gave me" when a
+            # search actually ran on it - found via real usage: if that day/time turned out to
+            # be unparseable, this was being said in the same breath as asking what day/time to
+            # use, an incoherent pair of sentences back to back.
+            return templates.duration_updated(duration_minutes) + reply
+        return reply
 
     def _handle_contextual_reference(self, intent: ContextualReference) -> list[str]:
         try:
@@ -219,7 +244,8 @@ class DialogueManager:
         if self.state.established_expression is None:
             return templates.ask_day_time_preference()
         self.state.established_expression.duration_minutes = duration
-        return self._search_and_reply()
+        reply, _ = self._search_and_reply()
+        return reply
 
     def _handle_slot_decision(self, intent: SlotDecision) -> list[str]:
         """LLM fallback for confirm/select/reject, reached only when handle_turn's fast local
@@ -242,7 +268,14 @@ class DialogueManager:
         self.state.top_candidates = []
         return templates.slots_rejected()
 
-    def _search_and_reply(self) -> list[str]:
+    def _search_and_reply(self) -> tuple[list[str], bool]:
+        """Returns (reply, resolved) - resolved is False whenever the reply is actually a
+        clarifying question/error rather than a real search outcome. Callers that combine this
+        with their own preamble (e.g. duration_updated()'s "keeping the day/time preference you
+        already gave me") need to know which case they're in - found via real usage: a duration
+        correction whose day/time turned out to be unparseable was announcing "keeping your
+        day/time preference" in the same breath as asking what day/time to use, an incoherent
+        pair of sentences that only made sense once these two outcomes were told apart."""
         now = self.now_fn()
         find_event = self._cached_find_event if self.find_event is not None else None
         find_last_meeting = self._cached_find_last_meeting if self.find_last_meeting is not None else None
@@ -257,13 +290,13 @@ class DialogueManager:
             self.last_turn_timing.resolve_ms = sw.elapsed_ms
         except MissingDurationError:
             self.last_turn_timing.resolve_ms = sw.elapsed_ms
-            return templates.ask_duration()
+            return templates.ask_duration(), False
         except MissingAnchorTimeError:
             # Distinct from ask_duration() - this is deadline_before missing its anchor_time,
             # found via testing real Gemini on "before I leave for my trip on Friday" (no time
             # stated), which invented "18:00" from nothing rather than leaving it blank.
             self.last_turn_timing.resolve_ms = sw.elapsed_ms
-            return templates.ask_deadline_time()
+            return templates.ask_deadline_time(), False
         except UnresolvedReferenceError as exc:
             self.last_turn_timing.resolve_ms = sw.elapsed_ms
             if isinstance(self.state.established_expression, SimpleDateTime):
@@ -273,21 +306,21 @@ class DialogueManager:
                 # found via testing the assignment's own example conversation, which opens with
                 # exactly that phrase. Ask for day/time, don't claim we "couldn't find" a
                 # reference - that wording belongs to actual named-event lookups instead.
-                return templates.ask_day_time_preference()
-            return templates.could_not_find_reference(str(exc))
+                return templates.ask_day_time_preference(), False
+            return templates.could_not_find_reference(str(exc)), False
         except PastDateError:
             # Distinct from the generic calendar_failure() catch-all below - this is not a
             # Calendar API problem, it's a nonsensical request ("last week"). Found via testing
             # real Gemini on "last week"/"yesterday", both of which resolved to a genuine past
             # datetime with no error at all before this check existed.
             self.last_turn_timing.resolve_ms = sw.elapsed_ms
-            return templates.cannot_schedule_in_the_past()
+            return templates.cannot_schedule_in_the_past(), False
         except Exception:
             # Graceful degradation: a real Calendar/network failure inside resolve()'s event
             # lookups should surface as "try again," never a stack trace or a hallucinated time.
             self.last_turn_timing.resolve_ms = sw.elapsed_ms
             logger.exception("Unexpected failure resolving constraints")
-            return templates.calendar_failure()
+            return templates.calendar_failure(), False
 
         self.state.resolved_constraints = constraints
 
@@ -298,19 +331,19 @@ class DialogueManager:
         except Exception:
             self.last_turn_timing.calendar_ms += sw.elapsed_ms
             logger.exception("Unexpected failure checking calendar availability")
-            return templates.calendar_failure()
+            return templates.calendar_failure(), False
 
         if not candidates:
             self.state.phase = "searching"
             self.state.top_candidates = []
-            return templates.no_slots_even_after_widening()
+            return templates.no_slots_even_after_widening(), True
 
         ranked = rank_candidates(candidates, constraints)
         top_n = ranked[:MAX_OFFERED_SLOTS]
         self.state.top_candidates = top_n
         self.state.top_candidate_was_widened = was_widened
         self.state.phase = "confirming"
-        return templates.present_available_slot(top_n, constraints.duration_minutes, was_widened)
+        return templates.present_available_slot(top_n, constraints.duration_minutes, was_widened), True
 
     def _book_slot(self, index: int = 0) -> list[str]:
         if not self.state.top_candidates or index >= len(self.state.top_candidates):
