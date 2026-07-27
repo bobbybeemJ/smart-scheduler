@@ -198,7 +198,15 @@ class SimpleDateTime(SchedulingRequestBase):
     dateparser (deterministic, not the LLM) in the resolver."""
 
     kind: Literal["simple_datetime"] = "simple_datetime"
-    raw_phrase: str
+    raw_phrase: Optional[str] = None
+    """Null when the message is a scheduling request that states no day/time at all yet (e.g.
+    "I need to schedule a meeting"). Originally a required str, which forced the model to pick
+    between inventing something to fill it (violating the "never invent" rule) or misclassifying
+    the whole message as out_of_scope - found via live testing: the assignment's own example
+    opening line ("I need to schedule a meeting") was being classified as out_of_scope 2/2 times,
+    silently telling a legitimate (if incomplete) scheduling request that this assistant "can
+    only help schedule a new meeting slot." Optional removes the forced choice - the resolver
+    treats null the same as an unparseable phrase (ask for day/time), never a resolver crash."""
 
 
 class DurationUpdate(BaseModel):

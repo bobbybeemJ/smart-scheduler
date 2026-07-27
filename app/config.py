@@ -11,18 +11,24 @@ class Settings(BaseSettings):
 
     use_mock_llm: bool = True
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-3.5-flash"
-    """Switched from gemini-flash-lite-latest after real-usage testing found the lite model
-    unreliable on compound sentences (duration/day-part combinations correct only ~25-33% of the
-    time; occasional chain-of-thought leaking into structured output fields).
+    gemini_model: str = "gemini-flash-lite-latest"
+    """Tried moving to gemini-3.6-flash and then gemini-3.5-flash after real-usage testing found
+    this lite model unreliable on compound sentences (duration/day-part combinations correct
+    only ~25-33% of the time; occasional chain-of-thought leaking into structured output fields).
+    Both non-lite models scored 6/6 on the same fragile phrases - but BOTH also hit an identical
+    hard 429 wall at 20 requests/DAY on this project's free-tier key, not the ~1500 RPD / 15 RPM
+    figure commonly quoted for gemini-3.5-flash's free tier elsewhere. Verified this was a real
+    daily cap and not a pacing artifact: waited out the exact `retryDelay` the API itself
+    reported, then waited 100+ seconds completely untouched (no other calls in between,
+    ruling out a sliding-window reset triggered by repeated polling), and still got 429s both
+    times, on both models, on different days.
 
-    Tried gemini-3.6-flash first (6/6 correct on the same fragile phrases, fastest per call) but
-    hit a hard wall: its free tier caps at 20 requests/DAY (not just a per-minute limit), and
-    ordinary same-day testing exhausted it outright. gemini-3.5-flash scored the same on
-    reliability in direct comparison and had NOT hit a daily cap after a full day's testing at
-    the time of switching - re-verify with scripts/sanity/list_gemini_models.py plus a small,
-    paced test batch if quota errors reappear, since exact daily caps aren't documented anywhere
-    queryable in advance and can only be discovered by actually hitting them."""
+    Back on gemini-flash-lite-latest as the only model with consistently usable free-tier quota.
+    Its compound-sentence unreliability is now handled with targeted deterministic fixes in
+    app/llm/client.py (duration-extraction regex fallback, raw_phrase reasoning-leak cleanup)
+    instead of further prompt iteration or another model switch - see that file's docstrings.
+    Re-verify with scripts/sanity/list_gemini_models.py plus a small, paced test batch if this
+    changes; exact daily caps aren't documented anywhere queryable in advance."""
 
     google_oauth_client_id: str = ""
     google_oauth_client_secret: str = ""

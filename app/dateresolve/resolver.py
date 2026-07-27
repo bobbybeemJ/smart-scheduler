@@ -244,6 +244,7 @@ def _resolve_dynamic_buffer(
 
 
 _MAX_RAW_PHRASE_WORDS = 12
+_MAX_RAW_PHRASE_CHARS = 60
 
 
 def _resolve_simple_datetime(expr: SimpleDateTime, now: dt.datetime) -> ResolvedConstraints:
@@ -251,6 +252,8 @@ def _resolve_simple_datetime(expr: SimpleDateTime, now: dt.datetime) -> Resolved
     several independent rounds of real-usage bug fixes (o'clock, day-parts, weekday prefixes,
     AM/PM), each individually well-justified but cumulatively hard to hold in your head as one
     block. Splitting by responsibility (not behavior change) keeps it that way."""
+    if expr.raw_phrase is None:
+        raise UnresolvedReferenceError("No day/time stated yet")
     _reject_if_implausibly_long(expr.raw_phrase)
 
     raw_phrase = helpers.normalize_oclock(expr.raw_phrase)
@@ -278,12 +281,19 @@ def _reject_if_implausibly_long(raw_phrase: str) -> None:
     """Defends against a real, if intermittent, failure mode of the free-tier LLM: instead of a
     short clean phrase like "next Wednesday at 3pm," it occasionally emits its own leaked
     reasoning into raw_phrase instead ("...removed duration text as required rule 2 says
-    raw_phrase must not contain..." - an actual observed sample, confirmed reproducible roughly
-    1 in 4 tries on one specific phrase). A genuine date/time phrase is never this long, and
-    dateparser might otherwise latch onto some date-like fragment buried in all that noise and
-    resolve to an unpredictable date instead of failing cleanly - reject outright and ask again
-    rather than gamble on what dateparser does with it."""
-    if len(raw_phrase.split()) > _MAX_RAW_PHRASE_WORDS:
+    raw_phrase must not contain..." - an actual observed sample). A genuine date/time phrase is
+    never this long, and dateparser might otherwise latch onto some date-like fragment buried in
+    all that noise and resolve to an unpredictable date instead of failing cleanly - reject
+    outright and ask again rather than gamble on what dateparser does with it.
+
+    Checks BOTH word count and raw character length - word count alone missed a real observed
+    case: the model hallucinated a UUID and an ISO timestamp appended after a clean phrase
+    ("Friday afternoon b20451cf-41ee-4171-8bc5-01e4ecbe567a 2026-03-31 03:00:23.490793 UTC"),
+    which is only 6 whitespace-separated "words" (hyphen/colon-joined, not space-joined) despite
+    being obvious garbage - and is exactly the dangerous shape, since dateparser is good at
+    parsing the ISO-looking fragments such garbage tends to contain, risking a confidently wrong
+    date instead of a clean failure."""
+    if len(raw_phrase.split()) > _MAX_RAW_PHRASE_WORDS or len(raw_phrase) > _MAX_RAW_PHRASE_CHARS:
         raise UnresolvedReferenceError(f"raw_phrase is implausibly long, rejecting rather than guessing: {raw_phrase!r}")
 
 
