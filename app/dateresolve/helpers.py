@@ -61,17 +61,52 @@ def strip_weekday_prefix(phrase: str) -> str:
     return _WEEKDAY_PREFIX_RE.sub("", phrase).strip()
 
 
+_WEEK_QUALIFIER_RE = re.compile(r"^(next|this|coming)\s+week\b", re.IGNORECASE)
+
+
+def week_qualifier_offset(phrase: str) -> Optional[int]:
+    """0 for "this week", 1 for "next"/"coming week" - an explicit calendar-week qualifier
+    stated before a weekday name ("next week on Monday"), as opposed to "next Monday" alone (no
+    "week" word - the other prefix shape _WEEKDAY_PREFIX_RE also strips), which means just the
+    nearest occurrence of that weekday, not necessarily next calendar week. Returns None if no
+    such qualifier is present, so callers fall back to nearest-occurrence arithmetic.
+
+    Found via testing Claude vs Gemini side by side (2026-07-27): both extracted "next week on
+    Tuesday at 2pm" as simple_datetime with the whole phrase as raw_phrase (correct kind choice
+    per schemas.py's own rule), but resolve() was silently treating it identically to bare
+    "Tuesday" - if today already IS Monday, "next week on Monday" was resolving to TODAY, not a
+    week later. try_parse_weekday_only's docstring even claimed this exact phrasing was already
+    handled, but the "handling" only kept dateparser from crashing on it (by never calling
+    dateparser for a bare weekday), not the week-offset semantics of the qualifier itself - the
+    old code below never distinguished "next week on Monday" from plain "next Monday" at all."""
+    match = _WEEK_QUALIFIER_RE.match(phrase.strip())
+    if match is None:
+        return None
+    return 0 if match.group(1).lower() == "this" else 1
+
+
+def weekday_in_week_offset(now: dt.datetime, week_offset: int, target_weekday: int) -> dt.date:
+    """The date of target_weekday (0=Monday) within the Mon-Sun calendar week that is
+    week_offset weeks from now's calendar week (0=this week, 1=next week) - the same Mon-Sun
+    week convention RelativeRangeWithExclusions.week_offset already uses elsewhere."""
+    this_monday = now.date() - dt.timedelta(days=now.weekday())
+    target_monday = this_monday + dt.timedelta(weeks=week_offset)
+    return target_monday + dt.timedelta(days=target_weekday)
+
+
 def try_parse_weekday_only(now: dt.datetime, phrase: str) -> Optional[dt.date]:
     """Handles "Monday", "next Monday", "this Monday", "on Monday", and "next week on Monday"
-    (a real phrasing found via real Gemini for "next week on Tuesday" - dateparser flatly fails
-    to parse that exact wording, returning None) via our own deterministic weekday arithmetic.
-    dateparser is also empirically unreliable on plain "next <weekday>" phrasing (observed
-    returning None for it), so bare weekday references never go through dateparser at all."""
+    via our own deterministic weekday arithmetic - dateparser is empirically unreliable on any
+    of these prefixed forms (confirmed returning None for "next Wednesday 3:00" and for "next
+    week on Tuesday" alike), so bare weekday references never go through dateparser at all."""
     candidate = strip_weekday_prefix(phrase)
     try:
         target_weekday = weekday_index(candidate)
     except ValueError:
         return None
+    week_offset = week_qualifier_offset(phrase)
+    if week_offset is not None:
+        return weekday_in_week_offset(now, week_offset, target_weekday)
     days_ahead = (target_weekday - now.weekday()) % 7
     return now.date() + dt.timedelta(days=days_ahead)
 

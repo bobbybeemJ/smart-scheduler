@@ -317,13 +317,23 @@ def _parse_via_dateparser(
     parsed = dateparser.parse(dateparser_input, settings={"RELATIVE_BASE": now, "PREFER_DATES_FROM": "future"})
     if parsed is None:
         raise UnresolvedReferenceError(f"Could not parse date/time phrase: {original_phrase!r}")
-    base_date = parsed.date()
 
-    if stated_weekday is not None and base_date.weekday() != stated_weekday:
-        raise UnresolvedReferenceError(
-            f"Could not reliably parse {original_phrase!r} - resolved to {base_date} "
-            f"({base_date.strftime('%A')}), which doesn't match the stated weekday"
-        )
+    # An explicit "next/this week" qualifier changes which week's occurrence of the stated
+    # weekday is meant (see helpers.week_qualifier_offset's docstring for the bug this closes:
+    # "next week on Monday" was silently resolving to the SAME date as bare "Monday" whenever
+    # dateparser's own guess happened to land on the right weekday, e.g. today itself being
+    # Monday) - computed deterministically instead of trusting dateparser's date, which never
+    # saw the qualifier at all (stripped out before the dateparser call above).
+    week_offset = helpers.week_qualifier_offset(remainder) if stated_weekday is not None else None
+    if week_offset is not None:
+        base_date = helpers.weekday_in_week_offset(now, week_offset, stated_weekday)
+    else:
+        base_date = parsed.date()
+        if stated_weekday is not None and base_date.weekday() != stated_weekday:
+            raise UnresolvedReferenceError(
+                f"Could not reliably parse {original_phrase!r} - resolved to {base_date} "
+                f"({base_date.strftime('%A')}), which doesn't match the stated weekday"
+            )
 
     explicit_time: Optional[tuple[int, int]] = None
     # dateparser copies now's time-of-day when the phrase has no explicit time - so a differing

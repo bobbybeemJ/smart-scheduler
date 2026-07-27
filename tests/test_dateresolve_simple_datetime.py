@@ -48,6 +48,35 @@ def test_next_week_on_weekday_phrasing():
     assert constraints.search_windows[0].start.date() == dt.date(2026, 7, 28)
 
 
+def test_next_week_qualifier_actually_shifts_a_week_not_just_nearest_occurrence():
+    """Regression test for a bug found via Claude-vs-Gemini comparison testing (2026-07-27),
+    provider-independent (purely in the deterministic resolver): the "next week" qualifier was
+    being silently dropped whenever the nearest future occurrence of the stated weekday already
+    happened to fall in what colloquially reads as "next week" - "next week on Tuesday" and bare
+    "Tuesday" resolved identically. test_next_week_on_weekday_phrasing above didn't catch this
+    because NOW's weekday (Wednesday) happens to make the nearest-Tuesday and next-week's-Tuesday
+    dates coincide. This test picks a target weekday (Friday) that HASN'T happened yet this week
+    relative to NOW (Wednesday) - so nearest-occurrence (this Friday, July 24) and next-week's
+    occurrence (July 31) genuinely differ, which is what actually exercises the fix."""
+    constraints = resolve(SimpleDateTime(duration_minutes=30, raw_phrase="next week on Friday"), NOW)
+    assert constraints.search_windows[0].start.date() == dt.date(2026, 7, 31)  # NOT July 24
+
+
+def test_this_week_qualifier_stays_within_the_current_week():
+    constraints = resolve(SimpleDateTime(duration_minutes=30, raw_phrase="this week on Friday"), NOW)
+    assert constraints.search_windows[0].start.date() == dt.date(2026, 7, 24)
+
+
+def test_next_week_qualifier_with_explicit_time_still_shifts_a_week():
+    """Same bug as test_next_week_qualifier_actually_shifts_a_week_not_just_nearest_occurrence,
+    but with an explicit time attached - this phrasing routes through _parse_via_dateparser
+    (dateparser is used for the TIME portion) rather than try_parse_weekday_only, a different
+    code path that needed the identical fix."""
+    constraints = resolve(SimpleDateTime(duration_minutes=30, raw_phrase="next week on Friday at 2pm"), NOW)
+    window = constraints.search_windows[0]
+    assert window.start == dt.datetime(2026, 7, 31, 14, 0)  # NOT July 24
+
+
 def test_relative_phrase_falls_back_to_dateparser():
     constraints = resolve(SimpleDateTime(duration_minutes=30, raw_phrase="in 3 days"), NOW)
     assert constraints.search_windows[0].start.date() == dt.date(2026, 7, 25)

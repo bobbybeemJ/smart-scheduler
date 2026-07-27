@@ -3,6 +3,8 @@ identically in production - no code path differs between local dev and deployed.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -10,6 +12,20 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     use_mock_llm: bool = True
+
+    llm_provider: Literal["gemini", "anthropic"] = "anthropic"
+    """Which backend app/llm/client.py dispatches extract_intent() to - see
+    app/llm/anthropic_backend.py (default) and app/llm/gemini_backend.py (kept as a fallback
+    option, not deleted, in case Anthropic quota/pricing ever becomes a blocker).
+
+    Switched the default here 2026-07-27 after side-by-side testing: Claude Haiku 4.5 scored
+    14/15 clean on the exact phrases that broke gemini-flash-lite-latest this session (the
+    leading-duration bug, raw_phrase corruption, the vague-opener misclassification) with ZERO
+    regex fallbacks needed, at roughly $0.003/call (~$3 per 1000 full conversations) - see
+    app/llm/anthropic_backend.py's docstring for the full comparison. gemini_backend.py's regex
+    safety nets stay scoped to that file rather than being deleted or generalized, since they
+    were compensating for gemini-flash-lite-latest specifically, not a universal requirement."""
+
     gemini_api_key: str = ""
     gemini_model: str = "gemini-flash-lite-latest"
     """Tried moving to gemini-3.6-flash and then gemini-3.5-flash after real-usage testing found
@@ -29,6 +45,9 @@ class Settings(BaseSettings):
     instead of further prompt iteration or another model switch - see that file's docstrings.
     Re-verify with scripts/sanity/list_gemini_models.py plus a small, paced test batch if this
     changes; exact daily caps aren't documented anywhere queryable in advance."""
+
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-haiku-4-5-20251001"
 
     google_oauth_client_id: str = ""
     google_oauth_client_secret: str = ""

@@ -4,6 +4,7 @@ pydantic>=2.9
 pydantic-settings>=2.6
 
 google-genai>=0.3
+anthropic>=0.120
 
 google-api-python-client>=2.149
 google-auth-httplib2>=0.2
