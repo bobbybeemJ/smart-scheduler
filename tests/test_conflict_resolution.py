@@ -220,6 +220,24 @@ def test_explicit_time_not_matching_any_offered_slot_triggers_a_fresh_search_sam
     assert manager.state.top_candidate.start.hour == 17
 
 
+def test_explicit_time_with_periods_ampm_resolves_to_the_correct_half_of_the_day():
+    """Real reported bug: "4:00 p.m. instead" was booking 4:00 AM, not 4:00 PM. Root cause was in
+    helpers._TIME_TOKEN_RE/_AMPM_RE - both used a trailing \\b (word boundary) right after
+    "a.m."/"p.m.", which can never match since a literal period isn't a word character, so the
+    am/pm alternative silently never matched and the isolated time token fell back to a bare
+    "4:00" with no meridiem, which dateparser then defaulted to AM. This slipped past earlier
+    testing of "book it for 12:00 p.m." specifically because dateparser happens to default a
+    bare, meridiem-less "12:00" to noon anyway - masking the defect for that one hour value while
+    it silently mis-resolved every other hour."""
+    manager = DialogueManager(now_fn=lambda: NOW, freebusy_fn=_always_free)
+    manager.handle_turn("Tuesday at 2pm")  # offers 2:00, 2:30, 3:00 PM
+
+    manager.handle_turn("4:00 p.m. instead")
+
+    assert manager.state.phase == "confirming"
+    assert manager.state.top_candidate.start.hour == 16  # 4 PM, not 4 AM
+
+
 def test_slot_decision_select_index_via_llm_fallback_when_fast_path_is_ambiguous():
     """"let's go with the earlier one" isn't in manager.py's hardcoded confirmation/ordinal
     phrase tables (_CONFIRMATION_PHRASES/_ORDINAL_SELECTORS), so the fast local match returns

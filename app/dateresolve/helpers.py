@@ -48,7 +48,17 @@ def strip_day_part(phrase: str) -> str:
 
 
 _WEEKDAY_PREFIX_RE = re.compile(r"^(next|this|coming)?\s*(week)?\s*(on)?\s*", re.IGNORECASE)
-_TIME_TOKEN_RE = re.compile(r"\b\d{1,2}(:\d{2})?\s*(am|pm)\b|\b\d{1,2}:\d{2}\b|\b\d{1,2}\s*o'?clock\b", re.IGNORECASE)
+# (?![a-zA-Z]) instead of a trailing \b: a trailing \b can never match right after "a.m."/"p.m."
+# (a literal period isn't a word character, so there's no word/non-word transition there for \b
+# to find) - found via a real reported bug: "4:00 p.m. instead" was extracting just "4:00" (the
+# am/pm alternative silently never matched), which dateparser then defaulted to 4:00 AM. This
+# went uncaught in earlier testing of "book it for 12:00 p.m." specifically because dateparser
+# happens to default a bare, am/pm-less "12:00" to noon anyway - masking the defect for that one
+# hour value while it silently mis-resolved every other hour.
+_TIME_TOKEN_RE = re.compile(
+    r"\b\d{1,2}(:\d{2})?\s*(am|pm|a\.m\.|p\.m\.)(?![a-zA-Z])|\b\d{1,2}:\d{2}\b|\b\d{1,2}\s*o'?clock\b",
+    re.IGNORECASE,
+)
 
 
 def strip_weekday_prefix(phrase: str) -> str:
@@ -126,7 +136,7 @@ def extract_time_token(phrase: str) -> Optional[str]:
     return match.group(0) if match else None
 
 
-_AMPM_RE = re.compile(r"\b(am|pm|a\.m\.|p\.m\.)\b", re.IGNORECASE)
+_AMPM_RE = re.compile(r"\b(am|pm|a\.m\.|p\.m\.)(?![a-zA-Z])", re.IGNORECASE)
 
 
 def has_explicit_ampm(phrase: str) -> bool:
