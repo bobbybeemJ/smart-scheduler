@@ -1,7 +1,7 @@
-"""Shared faster-whisper wrapper - used by both the Phase 0 offline test script and the live
-server-side fallback (Phase 6), so model-loading logic lives in exactly one place. Lazy-loaded:
-the model is never loaded into memory until actually needed, keeping Render's idle RAM footprint
-low when the fallback never triggers (see the plan's RAM risk on the free 512MB instance)."""
+"""Shared faster-whisper wrapper - used by both the offline test script and the live
+server-side fallback, so model-loading logic lives in exactly one place. Lazy-loaded: the model
+is never loaded into memory until actually needed, keeping idle RAM footprint low when the
+fallback never triggers."""
 
 from __future__ import annotations
 
@@ -17,10 +17,10 @@ _loaded_model_size: Optional[str] = None
 
 
 class STTFallbackDisabledError(Exception):
-    """Raised when transcribe_fallback() is called while ENABLE_SERVER_STT_FALLBACK=false.
-    Callers (Phase 6's websocket handler) should treat this as "no fallback available" and ask
-    the user to try a browser with Web Speech API support, never crash - this is the documented
-    escape hatch if Render shows memory pressure from the loaded model."""
+    """Raised when transcribe_fallback() is called while ENABLE_SERVER_STT_FALLBACK=false. The
+    websocket handler should treat this as "no fallback available" and ask the user to try a
+    browser with Web Speech API support, never crash - this is the documented escape hatch if
+    the deployed instance shows memory pressure from the loaded model."""
 
 
 def get_model(model_size: Optional[str] = None) -> WhisperModel:
@@ -36,7 +36,7 @@ def get_model(model_size: Optional[str] = None) -> WhisperModel:
 def transcribe(audio: Union[str, bytes, bytearray], model_size: Optional[str] = None) -> str:
     """Accepts a file path, or raw audio bytes (e.g. a webm/opus blob captured by the browser's
     MediaRecorder). faster-whisper decodes via the bundled PyAV library - no system ffmpeg
-    binary required, which matters since Render's Docker image doesn't have one installed."""
+    binary required, which matters since the deployed Docker image doesn't have one installed."""
     model = get_model(model_size)
     if isinstance(audio, (bytes, bytearray)):
         audio = io.BytesIO(audio)
@@ -45,8 +45,8 @@ def transcribe(audio: Union[str, bytes, bytearray], model_size: Optional[str] = 
 
 
 def transcribe_fallback(audio: Union[str, bytes, bytearray]) -> str:
-    """The live server-side path (Phase 6 calls this, never `transcribe()` directly, so the
-    ENABLE_SERVER_STT_FALLBACK flag is always honored)."""
+    """The live server-side path (the websocket handler calls this, never `transcribe()`
+    directly, so the ENABLE_SERVER_STT_FALLBACK flag is always honored)."""
     if not settings.enable_server_stt_fallback:
         raise STTFallbackDisabledError("Server-side STT fallback is disabled (ENABLE_SERVER_STT_FALLBACK=false).")
     return transcribe(audio, model_size=settings.whisper_fallback_model)

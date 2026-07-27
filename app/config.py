@@ -1,5 +1,5 @@
-"""Centralized settings, read from env vars (and .env locally). Render env vars take over
-identically in production - no code path differs between local dev and deployed."""
+"""Centralized settings, read from env vars (and .env locally). The deployed service's env vars
+take over identically in production - no code path differs between local dev and deployed."""
 
 from __future__ import annotations
 
@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     # The calendar owner's timezone. Every datetime elsewhere in the app is naive "wall clock"
     # time by design (see app/dateresolve) - this is the one place that boundary gets crossed,
     # since the real Google Calendar API requires timezone-aware timestamps regardless of what
-    # timezone the server itself happens to run in (Render's datacenter is not the user's).
+    # timezone the server itself happens to run in (the deployment's datacenter is not the user's).
     user_timezone: str = "Asia/Kolkata"
 
     port: int = 8000

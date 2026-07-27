@@ -1,8 +1,7 @@
 """Reply assembly - plain Python string templates, never an LLM call. Each function returns a
-list of clauses rather than one string: Phase 5 streams TTS synthesis clause-by-clause so audio
-starts on the first clause instead of waiting for the whole reply (see the plan's architecture
-decision on "streaming reinterpreted"). Only the factual parts (times/dates) ever appear here,
-assembled from deterministic Python values - never from LLM-generated text."""
+list of clauses rather than one string: TTS synthesis streams clause-by-clause so audio starts
+on the first clause instead of waiting for the whole reply. Only the factual parts (times/dates)
+ever appear here, assembled from deterministic Python values - never from LLM-generated text."""
 
 from __future__ import annotations
 
@@ -66,10 +65,10 @@ def duration_updated(new_duration: int) -> list[str]:
 
 
 def present_available_slot(slots: list[TimeWindow], duration_minutes: int, was_widened: bool) -> list[str]:
-    """The real answer, replacing Phase 3's placeholder - actual free slot(s) found via
-    freebusy, ranked by closeness to the stated preference. Presents up to a few ranked options
-    instead of just "the next open slot" - still exactly 3 clauses regardless of how many
-    options there are (1-3), so this doesn't add extra TTS synthesis calls."""
+    """Actual free slot(s) found via freebusy, ranked by closeness to the stated preference.
+    Presents up to a few ranked options instead of just "the next open slot" - still exactly 3
+    clauses regardless of how many options there are (1-3), so this doesn't add extra TTS
+    synthesis calls."""
     if was_widened:
         lead_in = (
             "I couldn't find anything in your original window, but I found this a bit further out:"

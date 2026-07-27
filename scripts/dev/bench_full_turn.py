@@ -1,6 +1,6 @@
-"""Measures the full pipeline as it stands after Phase 5: real Gemini extraction -> resolve()
--> reply templates -> clause-streamed TTS. Everything except STT and the websocket transport
-(Phase 6). Costs exactly 1 real Gemini call - not looped."""
+"""Measures the full pipeline: real LLM extraction -> resolve() -> reply templates ->
+clause-streamed TTS. Everything except STT and the websocket transport. Costs exactly 1 real
+LLM call - not looped."""
 
 import asyncio
 import time
@@ -44,7 +44,7 @@ async def main():
     print(f"Intent extraction + resolve:        {(t_intent_and_resolve - t0) * 1000:.0f} ms")
     print(f"Time to FIRST audio clause ready:   {(first_audio_ready - t0) * 1000:.0f} ms")
     print(f"Time to ALL audio clauses ready:     {(t_end - t0) * 1000:.0f} ms")
-    print("\n(STT and websocket transport not included - that's Phase 6.)")
+    print("\n(STT and websocket transport not included - see app/ws/handler.py for that path.)")
 
 
 if __name__ == "__main__":

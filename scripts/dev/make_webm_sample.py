@@ -1,7 +1,7 @@
-"""Transcodes the Phase 0 scratch_tts_sample.mp3 into a webm/opus file via PyAV, to simulate
-what the browser's MediaRecorder actually produces (webm container, opus codec) - closer to
-reality than testing against a clean WAV, per the plan's risk #6 (browser audio format vs. what
-faster-whisper can decode)."""
+"""Transcodes a scratch_tts_sample.mp3 into a webm/opus file via PyAV, to simulate what the
+browser's MediaRecorder actually produces (webm container, opus codec) - closer to reality than
+testing against a clean WAV, since that's the format faster-whisper actually needs to decode in
+production."""
 
 import pathlib
 

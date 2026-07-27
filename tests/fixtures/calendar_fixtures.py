@@ -1,6 +1,6 @@
 """Canned Calendar-API-shaped fixtures. Lets the resolver's injected calendar-lookup callbacks
-be exercised without hitting the network. Shared by the Phase 1 manual verification script and
-the Phase 9 pytest suite."""
+be exercised without hitting the network. Shared by the manual verification scripts and the
+pytest suite."""
 
 from __future__ import annotations
 

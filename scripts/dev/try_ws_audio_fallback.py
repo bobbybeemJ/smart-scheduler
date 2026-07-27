@@ -1,5 +1,5 @@
-"""Phase 6 verification of the audio_chunk fallback path (what the browser sends when Web
-Speech API is unavailable) through the real websocket - reuses the Phase 4 webm/opus sample."""
+"""Verification of the audio_chunk fallback path (what the browser sends when Web Speech API is
+unavailable) through the real websocket - reuses the webm/opus sample from make_webm_sample.py."""
 
 import asyncio
 import base64

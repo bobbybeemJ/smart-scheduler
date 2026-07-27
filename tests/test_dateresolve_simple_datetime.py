@@ -27,8 +27,8 @@ def test_day_part_with_no_exact_time():
 
 def test_next_weekday_with_no_exact_time():
     """Regression test: dateparser itself returns None for "next Monday" (confirmed via a real
-    call during Phase 1 development) - this must route through the deterministic weekday
-    helper instead, not dateparser, for phrases prefixed with next/this/on."""
+    call) - this must route through the deterministic weekday helper instead, not dateparser,
+    for phrases prefixed with next/this/on."""
     constraints = resolve(SimpleDateTime(duration_minutes=30, raw_phrase="next Monday"), NOW)
     window = constraints.search_windows[0]
     assert window.start.date() == dt.date(2026, 7, 27)

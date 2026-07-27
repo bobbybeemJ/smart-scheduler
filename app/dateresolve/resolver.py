@@ -32,7 +32,7 @@ LastMeetingLookupFn = Callable[[dt.date], Optional[dict]]
 
 class UnresolvedReferenceError(Exception):
     """Raised when a named event or contextual reference can't be found. The dialogue layer
-    (Phase 3) should turn this into a clarifying question, never a crash or a guessed date."""
+    should turn this into a clarifying question, never a crash or a guessed date."""
 
 
 class MissingDurationError(Exception):
@@ -114,8 +114,8 @@ def _dispatch(
 
 
 def resolve_contextual_duration(expr: ContextualReference, known_defaults: dict[str, int]) -> int:
-    """"our usual sync-up" -> a remembered duration. `known_defaults` comes from SessionState
-    (Phase 3), not the LLM - the model only ever says which reference the user meant."""
+    """"our usual sync-up" -> a remembered duration. `known_defaults` comes from SessionState,
+    not the LLM - the model only ever says which reference the user meant."""
     key = expr.reference.strip().lower()
     for remembered_key, minutes in known_defaults.items():
         if remembered_key in key or key in remembered_key:

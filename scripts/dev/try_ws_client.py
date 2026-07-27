@@ -1,7 +1,7 @@
-"""Phase 6 server-side round-trip verification: a scripted websocket client that simulates what
-the browser sends, so the full transcript -> dialogue -> resolve -> TTS -> audio_clause pipeline
-can be verified without a real browser/mic. The actual mic/Web-Speech-API/playback path still
-needs a real browser test - this only proves the server side.
+"""Server-side round-trip verification: a scripted websocket client that simulates what the
+browser sends, so the full transcript -> dialogue -> resolve -> TTS -> audio_clause pipeline can
+be verified without a real browser/mic. The actual mic/Web-Speech-API/playback path still needs
+a real browser test - this only proves the server side.
 
 Run against a running server: python -m scripts.dev.try_ws_client ["text1" "text2" ...]
 """

@@ -1,4 +1,4 @@
-"""Phase 0 sanity check: synthesizes one sentence to an audio file via edge-tts."""
+"""Sanity check: synthesizes one sentence to an audio file via edge-tts."""
 
 import asyncio
 import os

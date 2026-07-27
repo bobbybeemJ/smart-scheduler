@@ -1,5 +1,5 @@
-"""Websocket message contract, both directions. Defined once here so the server (Phase 6) and
-the browser client agree on shape - no ad-hoc dict shapes scattered across the codebase."""
+"""Websocket message contract, both directions. Defined once here so the server and the browser
+client agree on shape - no ad-hoc dict shapes scattered across the codebase."""
 
 from __future__ import annotations
 
@@ -29,9 +29,9 @@ class AudioChunkMessage(BaseModel):
 
 
 class ReplyClausesMessage(BaseModel):
-    """Server -> client: the assembled reply, one clause per list entry. Phase 5/6 stream TTS
-    synthesis clause-by-clause so audio starts on the first clause rather than waiting for the
-    whole reply (see the plan's "streaming reinterpreted" architecture decision)."""
+    """Server -> client: the assembled reply, one clause per list entry. TTS synthesis streams
+    clause-by-clause so audio starts on the first clause rather than waiting for the whole
+    reply."""
 
     type: Literal["reply_clauses"] = "reply_clauses"
     clauses: list[str]

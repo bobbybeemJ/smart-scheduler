@@ -1,7 +1,7 @@
 """Offline TTS fallback, used only when edge-tts fails. pyttsx3 picks its backend per platform:
 SAPI5 on Windows (what local dev testing exercises), espeak-ng on Linux - which is exactly why
-the Phase 10 Dockerfile installs espeak-ng explicitly, since Render's native buildpack may not
-allow apt installs and this fallback would otherwise silently not work in production."""
+the Dockerfile installs espeak-ng explicitly, since this fallback would otherwise silently not
+work in the deployed container."""
 
 from __future__ import annotations
 

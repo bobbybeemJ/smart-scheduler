@@ -20,8 +20,7 @@ def test_vague_multiconstraint_extracted_correctly_from_mock_llm():
     assert intent.week_offset == 1
     assert intent.exclude_weekdays == ["Wednesday"]
     assert intent.time_preference == TimePreference.NOT_TOO_EARLY
-    # Duration wasn't stated in this phrase - must stay None, not a guessed default
-    # (see the duration-hallucination fix from Phase 2).
+    # Duration wasn't stated in this phrase - must stay None, not a guessed default.
     assert intent.duration_minutes is None
 
 
@@ -39,8 +38,8 @@ def test_vague_multiconstraint_resolves_to_next_calendar_week_excluding_wednesda
 
 
 def test_not_too_early_preference_applies_to_every_day_in_the_range_not_just_the_edges():
-    """Found during Phase 7: a naive implementation only respected the preference on the first
-    and last day of the range, silently allowing 9am slots on days in between."""
+    """A naive implementation only respected the preference on the first and last day of the
+    range, silently allowing 9am slots on days in between."""
     from app.scheduling.slot_finder import find_available_slots
 
     intent = extract_intent("next week, not too early, not on Wednesday")

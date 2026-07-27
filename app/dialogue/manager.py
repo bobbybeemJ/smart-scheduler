@@ -1,7 +1,7 @@
-"""Orchestrates a single conversation: LLM extraction (Phase 2) -> deterministic resolution
-(Phase 1) -> real freebusy conflict checking + ranking (Phase 7) -> calendar write -> reply
-templates. Decides whether there's enough information to search yet, or whether to ask a
-clarifying question - this is the "core behavior" loop from the assignment brief."""
+"""Orchestrates a single conversation: LLM extraction -> deterministic resolution -> real
+freebusy conflict checking + ranking -> calendar write -> reply templates. Decides whether
+there's enough information to search yet, or whether to ask a clarifying question - this is the
+"core behavior" loop from the assignment brief."""
 
 from __future__ import annotations
 

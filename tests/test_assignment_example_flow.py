@@ -80,7 +80,7 @@ def test_first_duration_answer_does_not_claim_to_be_keeping_a_prior_preference()
 
 def test_genuine_duration_correction_still_uses_the_updated_wording():
     """The opposite case must still work: once a duration IS already set, a later change should
-    still say it's keeping the existing day/time context (the original Phase 3 behavior)."""
+    still say it's keeping the existing day/time context."""
     manager = DialogueManager(now_fn=lambda: NOW, freebusy_fn=_always_free)
     manager.last_turn_timing = TurnTiming()  # normally set by handle_turn(); called directly here
     manager.state.established_expression = SimpleDateTime(duration_minutes=30, raw_phrase="Tuesday at 2pm")

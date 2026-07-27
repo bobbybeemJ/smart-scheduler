@@ -39,8 +39,8 @@ def test_stated_time_wins_when_the_last_meeting_ends_well_before_the_buffer_woul
 
 
 def test_real_meeting_buffer_overrides_the_stated_floor_when_it_runs_later():
-    """Found during Phase 1 verification: this is the actual differentiator - the buffer must
-    come from a real calendar lookup, not just default to the stated time."""
+    """This is the actual differentiator - the buffer must come from a real calendar lookup, not
+    just default to the stated time."""
     intent = extract_intent("evening, after 7, but I need an hour to decompress after my last meeting")
     intent.duration_minutes = 30
     last_meeting = make_event("running late meeting", dt.datetime(2026, 7, 22, 18, 45), dt.datetime(2026, 7, 22, 18, 45))

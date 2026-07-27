@@ -1,7 +1,7 @@
-"""Phase 7 behaviors: no-slots-available proactively suggests an alternative rather than a dead
-end, booking confirmation actually writes to the calendar, and a Calendar API failure degrades
-to a clarifying reply instead of a crash. Uses the mock LLM and fixture freebusy/insert
-functions - zero token cost, no real network calls, deterministic."""
+"""Conflict-resolution behaviors: no-slots-available proactively suggests an alternative rather
+than a dead end, booking confirmation actually writes to the calendar, and a Calendar API
+failure degrades to a clarifying reply instead of a crash. Uses the mock LLM and fixture
+freebusy/insert functions - zero token cost, no real network calls, deterministic."""
 
 import datetime as dt
 

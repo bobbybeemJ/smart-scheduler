@@ -1,7 +1,8 @@
-"""One-time (or periodic - see the 7-day refresh-token expiry risk in the plan) local OAuth
-consent flow. Prints the refresh token + client id/secret so they can be copied into .env and
-into the Render dashboard env vars. Render's filesystem is ephemeral, so the deployed app never
-reads a token.json - it reconstructs credentials from these env vars at startup instead.
+"""One-time (or periodic - see the 7-day refresh-token expiry risk for apps still in OAuth
+Testing status) local OAuth consent flow. Prints the refresh token + client id/secret so they
+can be copied into .env and into the deployed service's env vars. The deployed container's
+filesystem is ephemeral, so the app never reads a token.json - it reconstructs credentials from
+these env vars at startup instead.
 
 Prerequisites:
 - A GCP project with the Calendar API enabled.

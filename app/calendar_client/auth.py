@@ -1,6 +1,6 @@
 """Builds OAuth credentials purely from settings (never reads a local token.json). This is what
-lets the deployed app survive Render's ephemeral filesystem (a restart wipes any local file, but
-env vars persist across restarts).
+lets the deployed app survive the container's ephemeral filesystem (a restart wipes any local
+file, but env vars persist across restarts).
 
 Reads from app.config.settings, not raw os.environ - found via a real bug where the actual
 server (uvicorn app.main:app, no load_dotenv() anywhere in its import chain) couldn't see the
@@ -31,7 +31,7 @@ def build_credentials_from_env() -> Credentials:
     if missing:
         raise RuntimeError(
             f"Missing required settings: {missing}. Run scripts/oauth_bootstrap.py and copy "
-            "the printed values into .env (or the Render dashboard env vars for deploy)."
+            "the printed values into .env (or the deployed service's env vars)."
         )
 
     return Credentials(

@@ -1,9 +1,9 @@
-"""Phase 0 latency benchmark: measures each network hop in isolation so the 800ms end-to-end
-target is checked against real numbers instead of assumed ones. Prints a plain table; paste the
-output into docs/phase0_latency.md for the README.
+"""Latency benchmark: measures each network hop in isolation so the 800ms end-to-end target is
+checked against real numbers instead of assumed ones. Prints a plain table; paste the output
+into docs/latency.md for the README.
 
-Costs one real Gemini call and one real Calendar API call - not looped, run it a couple of times
-by hand if you want a spread, don't put it in a CI loop.
+Costs one real LLM call and one real Calendar API call - not looped, run it a couple of times by
+hand if you want a spread, don't put it in a CI loop.
 """
 
 import asyncio
@@ -68,7 +68,7 @@ def main():
         "edge-tts time-to-first-audio-byte": bench_tts_first_byte(),
     }
 
-    print("\n=== Phase 0 latency benchmark (real numbers, not assumed) ===")
+    print("\n=== Latency benchmark (real numbers, not assumed) ===")
     for name, ms in results.items():
         value = f"{ms:.0f} ms" if ms == ms else "SKIPPED (missing credentials/key)"
         print(f"  {name}: {value}")

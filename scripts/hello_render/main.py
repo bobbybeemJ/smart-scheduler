@@ -10,7 +10,7 @@ app = FastAPI()
 
 @app.get("/")
 def root():
-    return {"status": "ok", "message": "NxD Smart Scheduler - Phase 0 Render deploy check"}
+    return {"status": "ok", "message": "NxD Smart Scheduler - deploy check"}
 
 
 @app.get("/health")

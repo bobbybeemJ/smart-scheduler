@@ -7,5 +7,5 @@ from __future__ import annotations
 
 class LLMExtractionError(Exception):
     """Raised when a real LLM call fails, or returns something that doesn't validate against
-    TemporalExpression. The dialogue layer (Phase 3) should turn this into a clarifying/retry
-    reply, never a crash - see the plan's graceful-degradation requirement."""
+    TemporalExpression. The dialogue layer should turn this into a clarifying/retry reply,
+    never a crash."""

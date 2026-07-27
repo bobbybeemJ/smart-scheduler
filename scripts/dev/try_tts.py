@@ -1,4 +1,4 @@
-"""Phase 5 manual verification:
+"""Manual verification:
 1. Boot-time engine health check (edge-tts + pyttsx3).
 2. Multi-clause streaming - proves clause 1 is ready well before the last clause via timestamps.
 3. Simulated edge-tts failure - proves automatic fallback to pyttsx3 with real audio, no crash.

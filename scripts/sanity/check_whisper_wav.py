@@ -1,6 +1,6 @@
-"""Phase 0 sanity check: exercises both edge-tts and faster-whisper in one pass - synthesize a
-known sentence, then transcribe it back and print the result for a manual eyeball match.
-Uses the same synthesis step as check_edge_tts.py so it doesn't require a pre-existing WAV file."""
+"""Sanity check: exercises both edge-tts and faster-whisper in one pass - synthesize a known
+sentence, then transcribe it back and print the result for a manual eyeball match. Uses the same
+synthesis step as check_edge_tts.py so it doesn't require a pre-existing WAV file."""
 
 import asyncio
 import os

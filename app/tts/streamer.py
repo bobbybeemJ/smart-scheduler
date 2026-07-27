@@ -1,10 +1,9 @@
-"""Clause-chunked TTS streaming. Since replies are template-assembled (not LLM-generated - see
-the plan's architecture decision), there's no free-form generation to stream token-by-token.
-Clause boundaries are the natural chunk unit instead.
+"""Clause-chunked TTS streaming. Since replies are template-assembled (not LLM-generated), there's
+no free-form generation to stream token-by-token. Clause boundaries are the natural chunk unit
+instead.
 
-Two latency optimizations added after reviewing Phase 8's telemetry, both safe because they only
-change *how fast* clauses become available, never *what* audio is produced or the order it's
-delivered in:
+Two latency optimizations, both safe because they only change *how fast* clauses become
+available, never *what* audio is produced or the order it's delivered in:
 
 1. In-memory clause cache - many clauses are exact boilerplate repeated across many turns
    ("Should I book it?", "Anything else?"), so synthesizing them again via a real edge-tts
@@ -62,9 +61,9 @@ async def _synthesize_timed(index: int, clause: str, batch_start: float):
 
 async def synthesize_clauses(clauses: list[str]) -> AsyncIterator[tuple[int, bytes, str]]:
     """Yields (clause_index, audio_bytes, engine_used) in order as each clause becomes
-    available - the caller (Phase 6's websocket handler) sends/plays each chunk as soon as it's
-    ready. All clauses start synthesizing concurrently (see module docstring); only delivery
-    order is preserved, not synthesis order."""
+    available - the caller (the websocket handler) sends/plays each chunk as soon as it's ready.
+    All clauses start synthesizing concurrently (see module docstring); only delivery order is
+    preserved, not synthesis order."""
     batch_start = time.perf_counter()
     tasks = [asyncio.create_task(_synthesize_timed(i, clause, batch_start)) for i, clause in enumerate(clauses)]
 
@@ -90,11 +89,12 @@ async def synthesize_filler() -> tuple[bytes, str]:
 
 
 async def check_engine_health() -> dict[str, bool]:
-    """Boot-time check (Phase 6's app startup calls this once and logs the result) - gives
-    visibility into risk #2, since edge-tts is unofficial and can go down without notice.
-    Async because it's called from FastAPI's lifespan, which is already inside a running event
-    loop - asyncio.run() cannot be called from within one (this broke at real server startup:
-    "asyncio.run() cannot be called from a running event loop" - fixed by awaiting directly)."""
+    """Boot-time check (app startup calls this once and logs the result) - gives visibility into
+    which TTS engine is actually working, since edge-tts is unofficial and can go down without
+    notice. Async because it's called from FastAPI's lifespan, which is already inside a running
+    event loop - asyncio.run() cannot be called from within one (this broke at real server
+    startup: "asyncio.run() cannot be called from a running event loop" - fixed by awaiting
+    directly)."""
     result = {"edge_tts": False, "pyttsx3": False}
 
     try:

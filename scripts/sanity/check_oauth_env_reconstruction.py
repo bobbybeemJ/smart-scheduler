@@ -1,5 +1,5 @@
-"""Phase 0 sanity check: simulates what happens after a Render restart, where the filesystem
-is wiped and any local token.json is gone. Temporarily hides token.json (if present) and proves
+"""Sanity check: simulates what happens after a container restart, where the filesystem is
+wiped and any local token.json is gone. Temporarily hides token.json (if present) and proves
 credentials can still be built and used from env vars alone via app.calendar_client.
 Run as: python -m scripts.sanity.check_oauth_env_reconstruction"""
 

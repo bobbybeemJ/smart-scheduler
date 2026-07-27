@@ -1,5 +1,5 @@
 """Exercises app.calendar_client.client's wrappers against a mocked Google API service object -
-no real network, no real credentials needed. Also locks in the Phase 7 timezone fix: every
+no real network, no real credentials needed. Also locks in the timezone handling: every
 outbound call must carry a timezone-aware timestamp (Asia/Kolkata, +05:30, no DST), and every
 inbound response must come back stripped to naive local time."""
 

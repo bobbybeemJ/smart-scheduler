@@ -1,6 +1,6 @@
-"""Phase 2 manual verification: runs extract_intent() in mock mode (zero cost) against all 7
-scenario phrasings, then makes a couple of real Gemini calls (cost-conscious - only 2, not all 7)
-to prove the live path also works and that the duration-guessing bug found earlier is fixed.
+"""Manual verification: runs extract_intent() in mock mode (zero cost) against all 7 scenario
+phrasings, then makes a couple of real LLM calls (cost-conscious - only 2, not all 7) to prove
+the live path also works and that the duration-guessing bug found earlier is fixed.
 
 Run mock-only:  python -m scripts.dev.try_llm
 Run with live calls too: python -m scripts.dev.try_llm --live

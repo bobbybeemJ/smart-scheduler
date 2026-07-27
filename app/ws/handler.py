@@ -1,9 +1,9 @@
 """Websocket endpoint: one DialogueManager per connection (one conversation). Receives either
 source of transcript (Web Speech API text, or a MediaRecorder blob for server-side fallback
 transcription), runs a full turn, and streams the reply back as text immediately followed by
-each clause's audio as soon as it's synthesized. Also where per-turn latency telemetry (Phase 8)
-gets assembled - manager.last_turn_timing already has llm/resolve/calendar times, this module
-adds stt/tts/total and logs the complete picture."""
+each clause's audio as soon as it's synthesized. Also where per-turn latency telemetry gets
+assembled - manager.last_turn_timing already has llm/resolve/calendar times, this module adds
+stt/tts/total and logs the complete picture."""
 
 from __future__ import annotations
 
@@ -105,8 +105,8 @@ async def _handle_turn(websocket: WebSocket, manager: DialogueManager, text: str
         loop = asyncio.get_running_loop()
         clauses = await loop.run_in_executor(None, manager.handle_turn, text)
     except Exception:
-        # Defense-in-depth crash guard - Phase 7 already handles specific Calendar/LLM failures
-        # gracefully inside manager.py; this catches anything unexpected that slips past it.
+        # Defense-in-depth crash guard - manager.py already handles specific Calendar/LLM
+        # failures gracefully; this catches anything unexpected that slips past it.
         logger.exception("Unexpected error handling turn")
         await websocket.send_json(
             ErrorMessage(message="Sorry, something went wrong on my end. Could you try again?").model_dump()

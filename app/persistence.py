@@ -3,7 +3,7 @@ across websocket reconnects and (as long as the file survives) server restarts -
 only lived in memory for the lifetime of a single websocket connection, which was a real gap
 flagged during review. Deliberately not a database: this is a single-user personal assistant, and
 a JSON file is the simplest thing that satisfies the project's 100%-free, no-extra-infra
-constraint. Known limitation: Render's filesystem is ephemeral, so a full container
+constraint. Known limitation: the deployed container's filesystem is ephemeral, so a full
 restart/redeploy still loses this - same documented tradeoff as the OAuth token situation
 elsewhere in this project.
 

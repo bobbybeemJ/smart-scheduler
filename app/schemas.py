@@ -1,7 +1,7 @@
-"""Structured intent shapes. The LLM (Phase 2) only ever fills in these fields from natural
-language - it never computes an actual date/time itself. Every field here is a raw extracted
-value (a weekday name, an hour string, an event name, a day-offset) that Python resolves
-deterministically in app/dateresolve/resolver.py."""
+"""Structured intent shapes. The LLM only ever fills in these fields from natural language - it
+never computes an actual date/time itself. Every field here is a raw extracted value (a weekday
+name, an hour string, an event name, a day-offset) that Python resolves deterministically in
+app/dateresolve/resolver.py."""
 
 from __future__ import annotations
 
@@ -162,8 +162,8 @@ class RelativeRangeWithExclusions(SchedulingRequestBase):
 
 
 class ContextualReference(BaseModel):
-    """"our usual sync-up" - has no standalone window; the dialogue layer (Phase 3) resolves
-    the duration from session state and merges it with whatever other constraint is active."""
+    """"our usual sync-up" - has no standalone window; the dialogue layer resolves the duration
+    from session state and merges it with whatever other constraint is active."""
 
     kind: Literal["contextual_reference"] = "contextual_reference"
     reference: str
@@ -212,9 +212,8 @@ class SimpleDateTime(SchedulingRequestBase):
 class DurationUpdate(BaseModel):
     """"actually we need a full hour now" - a correction to an already-established duration,
     with day/time constraints unchanged. Only used when the message is purely a duration
-    correction to a meeting already being discussed; the dialogue layer (Phase 3) merges this
-    into the existing established expression and re-resolves, rather than restarting the
-    conversation."""
+    correction to a meeting already being discussed; the dialogue layer merges this into the
+    existing established expression and re-resolves, rather than restarting the conversation."""
 
     kind: Literal["duration_update"] = "duration_update"
     duration_minutes: int
@@ -268,8 +267,8 @@ class TimeWindow(BaseModel):
 
 
 class ResolvedConstraints(BaseModel):
-    """Deterministic output of resolver.resolve() - everything Phase 7's slot_finder needs to
-    search real freebusy data for a candidate slot. No hallucinated times, only computed ones."""
+    """Deterministic output of resolver.resolve() - everything slot_finder.py needs to search
+    real freebusy data for a candidate slot. No hallucinated times, only computed ones."""
 
     duration_minutes: int
     search_windows: list[TimeWindow]

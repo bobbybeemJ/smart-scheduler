@@ -1,4 +1,4 @@
-"""Phase 0 sanity check: bare mic -> websocket -> echo round trip, no LLM/calendar involved.
+"""Sanity check: bare mic -> websocket -> echo round trip, no LLM/calendar involved.
 Run with: python -m uvicorn scripts.ws_echo.server:app --reload --port 8000
 Then open http://localhost:8000 in Chrome and speak into the mic."""
 

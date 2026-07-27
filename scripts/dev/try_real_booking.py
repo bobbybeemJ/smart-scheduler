@@ -1,6 +1,6 @@
-"""Phase 7 REAL integration test: exercises the full pipeline against the actual Google
-Calendar (real freebusy check, real event creation), then deletes the test event it creates.
-Uses the mock LLM to avoid burning Gemini quota - only the Calendar API calls are real.
+"""REAL integration test: exercises the full pipeline against the actual Google Calendar (real
+freebusy check, real event creation), then deletes the test event it creates. Uses the mock LLM
+to avoid burning API quota - only the Calendar API calls are real.
 
 This creates and then deletes one real event on your calendar. Run: python -m scripts.dev.try_real_booking
 """

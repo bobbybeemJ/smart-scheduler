@@ -1,14 +1,13 @@
 """Per-turn latency instrumentation - one structured log line per conversational turn covering
 every stage (STT, LLM extraction, deterministic resolve, real Calendar API calls, TTS), so the
-actual end-to-end pipeline latency is visible in server logs for a real running conversation,
-not just Phase 0's isolated single-hop benchmarks.
+actual end-to-end pipeline latency is visible in server logs for a real running conversation.
 
 Note on resolve_ms vs calendar_ms: resolve() is "deterministic Python" by architecture, but for
 the event_relative and dynamic_buffer cases it also invokes the injected find_event/
 find_last_meeting callbacks, which are real Calendar API calls in production. Those are counted
 inside resolve_ms here, not calendar_ms - separating them would need timing hooks threaded into
-the resolver's callback wrappers themselves, more instrumentation plumbing than this phase's
-scope calls for. Documented here rather than silently blurring the distinction."""
+the resolver's callback wrappers themselves. Documented here rather than silently blurring the
+distinction."""
 
 from __future__ import annotations
 

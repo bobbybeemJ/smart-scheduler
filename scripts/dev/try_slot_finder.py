@@ -1,6 +1,6 @@
-"""Phase 7 manual verification of slot_finder.py + ranking.py against fixture freebusy data
-(no real Calendar API calls needed for this - deterministic and fast). Covers:
-1. Multi-day window business-hours clamping (the bug this phase's design worked around).
+"""Manual verification of slot_finder.py + ranking.py against fixture freebusy data (no real
+Calendar API calls needed for this - deterministic and fast). Covers:
+1. Multi-day window business-hours clamping.
 2. time_preference applied uniformly across every day, not just first/last.
 3. Ranking demonstrably not "first chronological slot."
 4. No-slots -> widened-search fallback.

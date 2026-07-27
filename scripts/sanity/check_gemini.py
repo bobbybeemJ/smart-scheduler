@@ -1,5 +1,5 @@
-"""Phase 0 sanity check: one real Gemini call. Costs one real token-metered request -
-run sparingly, not in a loop. Requires GEMINI_API_KEY in .env."""
+"""Sanity check: one real Gemini call. Costs one real token-metered request - run sparingly, not
+in a loop. Requires GEMINI_API_KEY in .env."""
 
 import os
 import time

@@ -1,5 +1,5 @@
-"""Phase 3 manual verification: a plain stdin/stdout loop against DialogueManager, USE_MOCK_LLM
-by default, for fast iteration without voice. Type 'exit' to quit.
+"""Manual verification: a plain stdin/stdout loop against DialogueManager, USE_MOCK_LLM by
+default, for fast iteration without voice. Type 'exit' to quit.
 
 Run: python -m scripts.terminal_chat
 """

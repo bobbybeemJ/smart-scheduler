@@ -1,5 +1,5 @@
 """Like make_webm_sample.py, but synthesizes an actual scheduling phrase (matching a mock
-keyword) rather than the generic Phase 0 test sentence, so the audio_chunk fallback path can be
+keyword) rather than a generic test sentence, so the audio_chunk fallback path can be
 demonstrated end-to-end including a real scheduling reply, not just the graceful-error path."""
 
 import asyncio

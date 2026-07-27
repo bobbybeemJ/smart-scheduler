@@ -1,5 +1,5 @@
-"""Phase 0 sanity check: confirms OAuth works end to end by listing your real calendars, via
-the real app.calendar_client module (no duplicated auth logic - see app/calendar_client/auth.py).
+"""Sanity check: confirms OAuth works end to end by listing your real calendars, via the real
+app.calendar_client module (no duplicated auth logic - see app/calendar_client/auth.py).
 Run scripts/oauth_bootstrap.py first to populate .env. Run as: python -m scripts.sanity.check_oauth_list_calendars
 """
 

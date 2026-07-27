@@ -1,6 +1,6 @@
-"""Phase 1 manual verification: exercises all 6 required parsing categories from the
-assignment brief against a fixed `now`, printing the resolved constraints for a human eyeball
-check. The codified pytest versions of these same scenarios come later in Phase 9."""
+"""Manual verification: exercises all 6 required parsing categories from the assignment brief
+against a fixed `now`, printing the resolved constraints for a human eyeball check. The codified
+pytest versions of these same scenarios live in the tests/ directory."""
 
 import datetime as dt
 

@@ -1,9 +1,8 @@
 """Real conflict detection: generates candidate slots within a ResolvedConstraints window and
 checks each against real Calendar freebusy data - this is what makes "find a meeting slot"
-actually check availability instead of just describing the search window (Phase 3's placeholder).
+actually check availability instead of just describing the search window.
 
-One freebusy query per search window (not per candidate/day) - cheaper and matches the plan's
-latency optimization backlog."""
+One freebusy query per search window (not per candidate/day) - cheaper and lower latency."""
 
 from __future__ import annotations
 
