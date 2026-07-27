@@ -22,8 +22,11 @@ rule rationale in the comments below the string, not inside it:
 - slot_decision must yield to a fresh request whenever the message states its own new day/time/
   duration, even if it also contains a confirming word like "book" - otherwise the wrong
   (already-offered) slot gets booked instead of the one actually just requested.
-- dynamic_buffer's after_time must never receive anything but a clock time or null - a named
-  event/person belongs in reference_event_name (buffer_source="named_event") instead.
+- earliest_time must never receive anything but a clock time or null - a named event/person
+  belongs in dynamic_buffer's reference_event_name (buffer_source="named_event") instead.
+  buffer_source only ever has two valid values; a stale prompt draft once described a third
+  ("next_meeting_today") that was never actually added to the schema - schema is the source of
+  truth here, always cross-check a rule against the actual Literal/Enum values before trusting it.
 """
 
 from __future__ import annotations
@@ -38,11 +41,11 @@ Rules:
 - Pick exactly one kind. contextual_reference is only for a reference to a previous/habitual meeting by description ("our usual sync-up"), never for a fresh request with its own constraints. A single named day (a weekday, "tomorrow", a specific date) is simple_datetime, even when phrased with "next week" - relative_range_with_exclusions is only for an actual range with no single day named.
 - duration_update: only when session state shows an established meeting and the message changes ONLY the duration, nothing else about day/time.
 - relative_range_with_exclusions: week_offset is signed (0=this week, 1=next, 2=the week after next, -1=last week, etc - any "N week(s)" phrasing maps here). time_preference (not_too_early/not_too_late) is a vague hour-of-day preference; week_position (early_in_range/late_in_range) is which days of the range to favor. These are independent - set only what's actually implied, leave the other null.
-- event_relative / deadline_before: earliest_time is an HH:MM floor (e.g. "not before 11am") - set only when a literal hour is stated or unambiguously implied, never invented.
+- earliest_time is an HH:MM clock-time floor ("not before 11am", "nothing before 9am", "after 7pm") shared by deadline_before, event_relative, and dynamic_buffer. Set it only when a literal hour is stated or unambiguously implied, never invented - it must always be a clock time or null, never a name (a named event/person belongs in dynamic_buffer's reference_event_name instead).
 - calendar_arithmetic: ordinal (first/second/third/fourth/fifth/last) x day_type ("weekday" = any Mon-Fri business day, or a specific weekday name) x month_offset (signed, same idea as week_offset). Fill in exactly what the user said for each part independently - never default to a previously-common combination.
 - slot_decision: only when session state's phase is "confirming" and the message is purely reacting to the offered slots (confirm_top / select_index with the 0-based position / reject_all), with no new day/time/duration of its own. A message stating its own new specific day/time/duration is a fresh request instead (its own proper kind), even if it also contains a word like "book".
 - out_of_scope: anything that isn't a scheduling request at all - cancellations, unrelated questions, small talk.
-- dynamic_buffer: after_time (an HH:MM clock-time floor) and buffer_minutes/buffer_source (a floor relative to another event) are independent and can combine. after_time must be a clock time or null - never a name. buffer_source is "last_meeting_today", "next_meeting_today", or "named_event" (with reference_event_name set to what was named).
+- dynamic_buffer: earliest_time and buffer_minutes/buffer_source (a floor relative to another event) are independent and can combine, not alternatives. buffer_source is "last_meeting_today" or "named_event" (with reference_event_name set to what was named).
 """
 
 

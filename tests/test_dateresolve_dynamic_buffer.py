@@ -22,7 +22,7 @@ NOW = dt.datetime(2026, 7, 22, 9, 0)  # Wednesday
 def test_dynamic_buffer_extracted_correctly_from_mock_llm():
     intent = extract_intent("evening, after 7, but I need an hour to decompress after my last meeting")
     assert isinstance(intent, DynamicBuffer)
-    assert intent.after_time == "19:00"
+    assert intent.earliest_time == "19:00"
     assert intent.buffer_minutes == 60
 
 
@@ -90,12 +90,12 @@ def test_dynamic_buffer_feeds_correctly_into_slot_finder_and_ranking():
 
 def test_named_event_buffer_extracted_correctly_from_mock_llm():
     """"at least an hour after my call with Sarah wraps up" - found via testing real Gemini: with
-    only "last_meeting_today" available and after_time required, the model stuffed "Sarah" into
-    after_time (meant to be a clock time), which then crashed trying to parse it as one. This
+    only "last_meeting_today" available and earliest_time required, the model stuffed "Sarah" into
+    earliest_time (meant to be a clock time), which then crashed trying to parse it as one. This
     kind gives a named-event reference its own honest field instead."""
     intent = extract_intent("a 20 minute call, at least an hour after my call with Sarah wraps up")
     assert isinstance(intent, DynamicBuffer)
-    assert intent.after_time is None
+    assert intent.earliest_time is None
     assert intent.buffer_source == "named_event"
     assert intent.reference_event_name == "call with Sarah"
 
@@ -124,11 +124,11 @@ def test_named_event_buffer_with_unknown_event_raises_not_a_crash():
         assert "call with Sarah" in str(exc)
 
 
-def test_after_time_none_with_last_meeting_today_still_resolves_without_crashing():
-    """after_time became optional to fix the "Sarah stuffed into a time field" crash - this
+def test_earliest_time_none_with_last_meeting_today_still_resolves_without_crashing():
+    """earliest_time became optional to fix the "Sarah stuffed into a time field" crash - this
     confirms the ORIGINAL last_meeting_today path still works correctly with no stated clock
     time at all, not just the new named_event path."""
-    intent = DynamicBuffer(duration_minutes=30, buffer_minutes=45)  # after_time defaults to None
+    intent = DynamicBuffer(duration_minutes=30, buffer_minutes=45)  # earliest_time defaults to None
     last_meeting = make_event("1:1", dt.datetime(2026, 7, 22, 17, 0), dt.datetime(2026, 7, 22, 17, 30))
     find_last_meeting = make_find_last_meeting({NOW.date(): last_meeting})
 

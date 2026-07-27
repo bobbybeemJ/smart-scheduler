@@ -140,7 +140,7 @@ _CANNED_RESPONSES: list[tuple[str, dict]] = [
         {
             "kind": "dynamic_buffer",
             "duration_minutes": None,
-            "after_time": "19:00",
+            "earliest_time": "19:00",
             "buffer_minutes": 60,
         },
     ),
@@ -149,7 +149,7 @@ _CANNED_RESPONSES: list[tuple[str, dict]] = [
         {
             "kind": "dynamic_buffer",
             "duration_minutes": 20,
-            "after_time": None,
+            "earliest_time": None,
             "buffer_minutes": 60,
             "buffer_source": "named_event",
             "reference_event_name": "call with Sarah",

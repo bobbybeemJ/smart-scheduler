@@ -390,8 +390,18 @@ class DialogueManager:
             self.state.top_candidates = []
             return templates.no_slots_even_after_widening(), True
 
+        exact_match = None
+        if constraints.exact_start is not None and not was_widened:
+            # The user stated one precise moment ("Tuesday at 2pm"), not a range - if that exact
+            # moment is free, present only it, not a ranked menu of nearby alternatives the user
+            # never asked for. Found via real usage: an exact request getting back 3 options
+            # (some 30-60 minutes later) read as if the request hadn't been understood as
+            # specific. Skipped once the search had to widen - at that point there's no single
+            # "the" moment left to prefer, so ranked alternatives are the right answer again.
+            exact_match = next((c for c in candidates if c.start == constraints.exact_start), None)
+
         ranked = rank_candidates(candidates, constraints)
-        top_n = ranked[:MAX_OFFERED_SLOTS]
+        top_n = [exact_match] if exact_match is not None else ranked[:MAX_OFFERED_SLOTS]
         self.state.top_candidates = top_n
         self.state.top_candidate_was_widened = was_widened
         self.state.phase = "confirming"

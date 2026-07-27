@@ -52,7 +52,8 @@ class SchedulingRequestBase(BaseModel):
     """Shared by every "kind" that represents an actual new meeting to find/book (everything
     except contextual_reference/duration_update/slot_decision/out_of_scope, which don't carry a
     fresh request of their own). Consolidates duration_minutes, previously duplicated
-    identically in all six kinds below.
+    identically in all six kinds below - every one of them reads it, unlike earliest_time (see
+    HasEarliestTime), which only three of the six actually use.
 
     A meeting_title field was tried here too (extracting "with Rahul" as a real calendar event
     name instead of a generic default) but reverted - adding it destabilized real Gemini's
@@ -65,7 +66,29 @@ class SchedulingRequestBase(BaseModel):
     duration_minutes: Optional[int] = None
 
 
-class DeadlineBefore(SchedulingRequestBase):
+class HasEarliestTime(BaseModel):
+    """Mixed in only by the three kinds whose resolver function actually reads earliest_time
+    (deadline_before, event_relative, dynamic_buffer) - deliberately NOT part of
+    SchedulingRequestBase itself. That was tried first, and it was a mistake: it put
+    earliest_time on all six scheduling kinds, including three (calendar_arithmetic,
+    simple_datetime, relative_range_with_exclusions) whose resolver functions never read it at
+    all, so a constraint set there would be silently dropped - the exact class of bug this
+    project has spent real effort finding and fixing elsewhere. A field only belongs on the base
+    every kind shares if every kind's resolver actually honors it.
+
+    earliest_time was previously duplicated on deadline_before/event_relative under this same
+    name, AND separately reinvented on dynamic_buffer under the different name "after_time" for
+    the exact same concept (an HH:MM clock-time floor) - one name for one concept now, not a
+    different field name per kind for something that means the same thing everywhere."""
+
+    earliest_time: Optional[str] = None
+    """An HH:MM (24h) clock-time floor - "not before 11am," "nothing before 9am," "after 7pm."
+    Only set this when the user states or clearly implies a literal hour - never invent one for
+    a vague "not too early" (a different, unrelated concept some kinds express via
+    time_preference instead)."""
+
+
+class DeadlineBefore(SchedulingRequestBase, HasEarliestTime):
     """"45 minutes sometime before my flight Friday at 6 PM" """
 
     kind: Literal["deadline_before"] = "deadline_before"
@@ -78,27 +101,15 @@ class DeadlineBefore(SchedulingRequestBase):
     duration_minutes guessing problem rule 2 already guards against - just not applied here.
     Optional + MissingAnchorTimeError (resolver.py) closes the same hole the same way."""
     buffer_minutes: int = 0
-    earliest_time: Optional[str] = None
-    """"nothing before 9am" - an HH:MM (24h) floor applying to every day the search window
-    touches, not just the anchor day. Found missing via testing real Gemini: this constraint
-    was silently dropped with no error at all before this field existed, identical to the
-    event_relative gap below. Only set this when the user states or clearly implies a literal
-    hour - never invent one for a vague "not too early" (that's a different, unrelated concept:
-    this project doesn't currently support a vague preference on this schema kind)."""
 
 
-class EventRelative(SchedulingRequestBase):
+class EventRelative(SchedulingRequestBase, HasEarliestTime):
     """"a 15-minute chat a day or two after the Project Alpha Kick-off event" """
 
     kind: Literal["event_relative"] = "event_relative"
     event_name: str
     offset_days_min: int
     offset_days_max: int
-    earliest_time: Optional[str] = None
-    """"not before 11am" - an HH:MM (24h) floor applying to every day in the offset window.
-    Found missing via testing real Gemini on exactly this phrase: the constraint was silently
-    dropped with zero error or trace of it in the extracted intent. Only set this when the user
-    states or clearly implies a literal hour."""
 
 
 class CalendarArithmetic(SchedulingRequestBase):
@@ -158,27 +169,27 @@ class ContextualReference(BaseModel):
     reference: str
 
 
-class DynamicBuffer(SchedulingRequestBase):
-    """"evening, after 7, but I need an hour to decompress after my last meeting" - after_time
-    (a stated clock-time floor) and buffer_minutes/buffer_source (a floor relative to another
-    event) are independent constraints that combine (the later of the two wins), not
-    alternatives - the assignment's own example states both at once."""
+class DynamicBuffer(SchedulingRequestBase, HasEarliestTime):
+    """"evening, after 7, but I need an hour to decompress after my last meeting" -
+    earliest_time (a stated clock-time floor, inherited from HasEarliestTime - this kind used to
+    call it "after_time" as its own separate field, the same concept reinvented under a
+    different name) and buffer_minutes/buffer_source (a floor relative to another event) are
+    independent constraints that combine (the later of the two wins), not alternatives - the
+    assignment's own example states both at once. Found via testing real Gemini: when a message
+    has NO stated clock time at all - just a buffer relative to a named event, e.g. "at least an
+    hour after my call with Sarah wraps up" - a required version of this field made the model
+    stuff the person's name in here instead, which then crashed trying to parse "Sarah" as a
+    time. Leave it null whenever no explicit clock time is stated; buffer_source/
+    reference_event_name below carry the "relative to an event" part on their own."""
 
     kind: Literal["dynamic_buffer"] = "dynamic_buffer"
-    after_time: Optional[str] = None
-    """An explicit HH:MM clock-time floor ("after 7pm"). Found via testing real Gemini: when a
-    message has NO stated clock time at all - just a buffer relative to a named event, e.g. "at
-    least an hour after my call with Sarah wraps up" - forcing this field to be non-null made the
-    model stuff the person's name in here instead, which then crashed trying to parse "Sarah" as
-    a time. Leave this null whenever no explicit clock time is stated; buffer_source/
-    reference_event_name below carry the "relative to an event" part on their own."""
     buffer_minutes: int
     buffer_source: Literal["last_meeting_today", "named_event"] = "last_meeting_today"
     reference_event_name: Optional[str] = None
     """Only set when buffer_source == "named_event" - e.g. "my call with Sarah" - resolved via
     the same calendar event lookup event_relative already uses. Added alongside making
-    after_time optional so a named-event reference has an honest field to live in instead of
-    being forced into after_time."""
+    earliest_time optional so a named-event reference has an honest field to live in instead of
+    being forced into earliest_time."""
 
 
 class SimpleDateTime(SchedulingRequestBase):
@@ -262,3 +273,11 @@ class ResolvedConstraints(BaseModel):
     only, after my last meeting"). Powers EventRelative/DeadlineBefore's earliest_time field."""
     excluded_weekdays: list[int] = Field(default_factory=list)  # 0=Monday .. 6=Sunday
     time_preference: Optional[TimePreference] = None
+    exact_start: Optional[dt.datetime] = None
+    """Set only when the user stated one precise preferred moment (simple_datetime with an
+    explicit time, e.g. "Tuesday at 2pm") - distinct from earliest_start/hard_deadline, which are
+    floors/ceilings on a range of otherwise-equal candidates, not a single preferred instant.
+    When set and that exact moment turns out to be free, the dialogue layer presents only that
+    slot instead of ranking it alongside nearby alternatives the user never actually asked for -
+    found via real usage: asking for an exact time and getting back three options including ones
+    30-60 minutes later read as if the assistant hadn't understood the request was specific."""

@@ -87,7 +87,7 @@ def main() -> None:
     show(
         "dynamic_buffer: 'evening, after 7, need an hour to decompress after my last meeting'",
         resolve(
-            DynamicBuffer(duration_minutes=30, after_time="19:00", buffer_minutes=60),
+            DynamicBuffer(duration_minutes=30, earliest_time="19:00", buffer_minutes=60),
             NOW,
             find_last_meeting=find_last_meeting,
         ),

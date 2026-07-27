@@ -55,6 +55,42 @@ def test_widened_search_proactively_suggests_alternative_day():
     assert manager.state.top_candidate.start >= dt.datetime(2026, 8, 1)
 
 
+def test_exact_stated_time_that_is_free_offers_only_that_one_slot():
+    """"Tuesday at 2pm" is a precise, unambiguous request - if 2pm is actually free, presenting
+    it alongside two nearby alternatives (2:30, 3:00) the user never asked for reads as if the
+    request hadn't been understood as specific. Found via real usage review: an exact time
+    should get a single "should I book it?" confirmation, not a ranked menu - that menu is for
+    genuinely vague requests (a range, a day-part) where multiple options add real value."""
+    manager = DialogueManager(now_fn=lambda: NOW, freebusy_fn=_always_free)
+    reply = manager.handle_turn("Tuesday at 2pm")
+
+    assert manager.state.phase == "confirming"
+    assert len(manager.state.top_candidates) == 1
+    assert manager.state.top_candidate.start.hour == 14
+    reply_text = " ".join(reply).lower()
+    assert "i found a slot that works" in reply_text
+    assert "a few options" not in reply_text
+
+
+def test_exact_stated_time_that_is_busy_falls_back_to_ranked_alternatives():
+    """Once the exact requested moment isn't actually available, there's no longer a single
+    "the" slot to prefer - ranked alternatives from the rest of that same window are the right
+    answer again, same as any other request with more than one reasonable candidate."""
+
+    def _busy_at_2pm(start, end):
+        collision_start = dt.datetime(2026, 7, 28, 14, 0)
+        if start < collision_start + dt.timedelta(minutes=30) and end > collision_start:
+            return [{"start": collision_start, "end": collision_start + dt.timedelta(minutes=30)}]
+        return []
+
+    manager = DialogueManager(now_fn=lambda: NOW, freebusy_fn=_busy_at_2pm)
+    manager.handle_turn("Tuesday at 2pm")
+
+    assert manager.state.phase == "confirming"
+    assert (manager.state.top_candidate.start.hour, manager.state.top_candidate.start.minute) != (14, 0)  # 2pm itself was busy
+    assert len(manager.state.top_candidates) > 1  # fell back to a ranked menu, not another single confirm
+
+
 def test_booking_confirmation_calls_insert_event_and_updates_phase():
     booked = {}
 
@@ -145,17 +181,25 @@ def test_fast_path_confirmation_does_not_swallow_a_message_with_its_own_new_time
 
 
 def test_explicit_time_matching_an_offered_slot_books_it_deterministically():
-    """"book it for 12:00 p.m." (or any short "book it for <time>" phrasing) - found via real
-    usage: even after the fast-path substring/digit fix above, real Gemini's own slot_decision
-    classification confirm_top-ed this roughly 2 times out of 3 in direct repeated testing,
-    silently booking the wrong (already-offered) slot despite a different time being stated.
-    Resolving an explicit stated time deterministically, without going through the LLM at all,
-    doesn't depend on it getting that judgment call right."""
-    manager = DialogueManager(now_fn=lambda: NOW, freebusy_fn=_always_free)
-    manager.handle_turn("Tuesday at 2pm")  # offers 2:00, 2:30, 3:00 PM for 30 minutes
-    assert manager.state.phase == "confirming"
+    """"book it for <time>" - found via real usage: even after the fast-path substring/digit fix
+    above, real Gemini's own slot_decision classification confirm_top-ed this roughly 2 times out
+    of 3 in direct repeated testing, silently booking the wrong (already-offered) slot despite a
+    different time being stated. Resolving an explicit stated time deterministically, without
+    going through the LLM at all, doesn't depend on it getting that judgment call right.
 
-    manager.handle_turn("book it for 2:30 pm")
+    Uses a range-based request (not a single exact time) so multiple candidates are actually
+    offered to match against - an exact-time request like "Tuesday at 2pm" now collapses to a
+    single confirm-only slot by design (see the exact_start fix), so it can't exercise the
+    match-against-several-offered-options path this test is for."""
+    manager = DialogueManager(now_fn=lambda: NOW, freebusy_fn=_always_free)
+    manager.handle_turn("next week, not too early, not on Wednesday")  # asks for duration
+    manager.handle_turn("actually we need a full hour now")  # supplies duration -> offers 3 ranked options
+    assert manager.state.phase == "confirming"
+    assert len(manager.state.top_candidates) > 1
+    second_offered = manager.state.top_candidates[1]
+
+    # 24-hour "H:MM" is unambiguous regardless of which offered slot happens to be selected
+    manager.handle_turn(f"book it for {second_offered.start.hour}:{second_offered.start.minute:02d}")
 
     assert manager.state.phase == "booked"
     assert manager.state.resolved_constraints is not None
