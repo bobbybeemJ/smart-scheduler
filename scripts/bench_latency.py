@@ -29,6 +29,20 @@ def bench_gemini() -> float:
     return (time.perf_counter() - start) * 1000
 
 
+def bench_claude() -> float:
+    import anthropic
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        return float("nan")
+    model = os.environ.get("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
+    client = anthropic.Anthropic(api_key=api_key)
+
+    start = time.perf_counter()
+    client.messages.create(model=model, max_tokens=16, messages=[{"role": "user", "content": "Reply with exactly: pong"}])
+    return (time.perf_counter() - start) * 1000
+
+
 def bench_calendar_freebusy() -> float:
     import datetime as dt
 
@@ -64,6 +78,7 @@ def bench_tts_first_byte() -> float:
 def main():
     results = {
         "Gemini call round-trip": bench_gemini(),
+        "Claude call round-trip": bench_claude(),
         "Calendar freebusy.query round-trip": bench_calendar_freebusy(),
         "edge-tts time-to-first-audio-byte": bench_tts_first_byte(),
     }
@@ -72,7 +87,7 @@ def main():
     for name, ms in results.items():
         value = f"{ms:.0f} ms" if ms == ms else "SKIPPED (missing credentials/key)"
         print(f"  {name}: {value}")
-    print("\nCopy this into docs/phase0_latency.md for the README.")
+    print("\nCopy this into docs/latency.md for the README.")
 
 
 if __name__ == "__main__":

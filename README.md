@@ -63,8 +63,33 @@ python -m scripts.terminal_chat
 pytest
 ```
 
-124 tests, fully offline (mocked LLM responses and calendar fixtures - no network or real
+125 tests, fully offline (mocked LLM responses and calendar fixtures - no network or real
 credentials needed anywhere in the suite).
+
+---
+
+## Latency, across the stack changes
+
+The stack changed twice over the course of this project - deploy target (local -> Render,
+explored and abandoned -> GCP Cloud Run) and LLM provider (Gemini -> Claude). Render was replaced
+*before* it was ever load-tested at the deployed level, so there's no real deployed-Render number
+to put in this table - rather than invent one, here's what was actually measured, each one dated
+and reproducible via the scripts named below:
+
+| | Isolated LLM call | Isolated Calendar call | Isolated TTS first-byte | Full turn, live deployed |
+|---|---|---|---|---|
+| **Local dev + Gemini** (2026-07-26, pre-GCP) | 696-785 ms | 1212-2623 ms | 892-1025 ms | not deployed yet |
+| **Local dev + Claude** (2026-07-27) | 1395-2039 ms | 1121-1166 ms | 771-780 ms | n/a (see next row) |
+| **GCP Cloud Run + Claude** (2026-07-27, current) | - | - | - | 1751-2397 ms reply text, 2840-3688 ms full audio |
+| **Render** (any provider) | never benchmarked - dropped before a deployed measurement existed | | | |
+
+A fresh attempt to also re-measure Gemini's isolated call today hung indefinitely (100+ seconds,
+no response) rather than returning a number - consistent with the free-tier quota exhaustion
+documented in `app/config.py`, and itself a small live demonstration of why Claude is the
+default now. Full numbers, methodology, and the reasoning behind each gap are in
+`docs/latency.md`; the actual latency-reduction techniques applied (concurrent clause synthesis,
+a perceived-latency filler, singleton clients, response caching) are in
+[Voice pipeline](#voice-pipeline-stttts) below.
 
 ---
 
@@ -379,15 +404,46 @@ LLM-generated), there's no free-form token stream to tap for the "streaming" dif
 assignment brief describes. Clause boundaries are the natural chunk unit instead - `tts/streamer.py`
 synthesizes all of a reply's clauses concurrently (not sequentially) and delivers them back to the
 browser in order as each becomes ready, so a 3-clause reply's total synthesis time collapses
-toward the slowest single clause instead of the sum of all three. A short filler clause ("Let me
-check that...") is sent immediately, pre-warmed at server startup, while the real LLM/resolve/
-calendar work runs in the background - the perceived-latency mask that makes the assistant feel
-responsive even though the real 800ms target isn't realistically achievable end-to-end (see
-[Known limitations](#known-limitations)).
+toward the slowest single clause instead of the sum of all three.
+
+### Latency-reduction techniques actually implemented
+
+800ms end-to-end was never realistically achievable on this stack (see the
+[latency table](#latency-across-the-stack-changes) above and `docs/latency.md`), so the actual
+work went into closing the gap between real and *felt* latency, plus trimming what's cheap to
+trim:
+
+- **Perceived-latency mask** - a short filler clause ("Let me check that...") is synthesized
+  once at server startup (pre-warmed, so not even the very first real turn pays for it) and sent
+  immediately, while the real LLM/resolve/calendar work runs in the background. This is the
+  single biggest lever: the table above shows filler audio arriving in under 20ms on every real
+  measurement, regardless of how long the actual turn takes.
+- **Concurrent TTS clause synthesis** (`tts/streamer.py`) - all of a reply's clauses start
+  synthesizing at the same time via `asyncio.create_task`, not one after another; only *delivery*
+  order is preserved, not synthesis order. A 3-clause reply's total synthesis time collapses
+  toward the slowest single clause instead of the sum of all three.
+- **In-memory TTS clause cache** (`tts/streamer.py`) - exact boilerplate clauses repeated across
+  many turns ("Should I book it?", "Anything else?") are cached after first synthesis, so a real
+  `edge-tts` network call only happens once per distinct clause, not once per turn.
+- **Singleton LLM clients** (`gemini_backend.py`/`anthropic_backend.py`'s `_get_client()`) - built
+  once per process at first use, not reconstructed per request, avoiding a repeated TLS/auth
+  handshake on every single turn.
+- **Per-conversation Calendar lookup cache** (`dialogue/manager.py`'s `_event_cache`/
+  `_last_meeting_cache`) - if a turn already resolved a named event or "last meeting today" via a
+  real Calendar API call, a later turn in the *same* conversation (e.g. a duration-only
+  correction that re-triggers `resolve()`) reuses that result instead of querying again.
+- **One freebusy query per search window, not per candidate slot** (`scheduling/slot_finder.py`)
+  - candidates are generated and filtered against a single real `freebusy.query` response per
+    window, rather than checking each 30-minute grid point with its own API call.
+
+Not implemented, and worth naming honestly: batching multiple *different* Calendar API calls
+(e.g. an event lookup and a freebusy check in the same turn) into one `BatchHttpRequest` was in
+the original project plan's latency backlog, but never actually built - the caching techniques
+above turned out to cover the cases that came up in practice.
 
 ## Testing strategy
 
-`pytest` runs 124 tests, fully offline - mocked LLM responses (`app/llm/mock_responses.py`,
+`pytest` runs 125 tests, fully offline - mocked LLM responses (`app/llm/mock_responses.py`,
 keyed by phrase) and fixture Calendar API data (`tests/fixtures/calendar_fixtures.py`), no real
 network or credentials needed anywhere in the suite. Every one of the 6 hard cases has a named
 test module; conflict resolution, mid-conversation state changes, and both deterministic
