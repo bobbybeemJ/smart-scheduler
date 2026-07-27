@@ -36,11 +36,32 @@ ws.onclose = () => {
   micBtn.disabled = true;
   micHint.textContent = "Reconnect by reloading the page";
 };
+// Tracks whether the TRUE final clause of the CURRENT turn's reply has actually been queued -
+// "the audioQueue is currently empty" is NOT the same thing and was the bug: the filler
+// (index=-1) is sent and often finishes playing well before the real reply even exists yet
+// (it's synthesized before the LLM/resolve/calendar work even starts), so the queue goes empty
+// mid-turn for a reason that has nothing to do with the bot being done - that momentary
+// emptiness was wrongly triggering auto-relisten while the bot was still about to speak the
+// real answer. reply_clauses tells the client exactly how many real clauses to expect before
+// any of their audio arrives, so the true last one can be identified by index instead of
+// guessed at from queue state.
+let expectedClauseCount = 0;
+let lastClauseQueued = false;
+
 ws.onmessage = (event) => {
   const msg = JSON.parse(event.data);
   if (msg.type === "reply_clauses") {
     logEntry(msg.clauses.join(" "), "bot");
+    expectedClauseCount = msg.clauses.length;
   } else if (msg.type === "audio_clause") {
+    if (msg.index === -1) {
+      // A new turn's filler just started - invalidate any stale "last clause" flag left over
+      // from the previous turn, in case this new filler also finishes before reply_clauses for
+      // THIS turn has arrived to reset expectedClauseCount.
+      lastClauseQueued = false;
+    } else if (msg.index === expectedClauseCount - 1) {
+      lastClauseQueued = true;
+    }
     enqueueAudio(msg.audio_base64, msg.mime_type);
   } else if (msg.type === "error") {
     logEntry(msg.message, "error");
@@ -62,12 +83,14 @@ function playNext() {
   const src = audioQueue.shift();
   if (!src) {
     isPlaying = false;
-    // Re-open the mic the instant the bot finishes speaking, not when the user gets around to
-    // tapping it - the engine's own startup lag (see startListening below) then has the whole
-    // gap between "reply audio ends" and "person actually starts talking" to complete, instead
-    // of eating into it. Only kicks in once mic permission has already been granted once (via
-    // an initial manual tap) - never auto-prompts for permission on its own.
-    if (hasListenedBefore) startListening();
+    // Re-open the mic once the bot has TRULY finished speaking (the real last clause has both
+    // arrived and finished playing) - not merely whenever the queue happens to be momentarily
+    // empty, which can happen mid-reply (see lastClauseQueued above). The engine's own startup
+    // lag (see startListening below) then has the whole gap between "reply audio ends" and
+    // "person actually starts talking" to complete, instead of eating into it. Only kicks in
+    // once mic permission has already been granted once (via an initial manual tap) - never
+    // auto-prompts for permission on its own.
+    if (hasListenedBefore && lastClauseQueued) startListening();
     return;
   }
   isPlaying = true;
