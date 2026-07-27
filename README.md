@@ -68,28 +68,22 @@ credentials needed anywhere in the suite).
 
 ---
 
-## Latency, across the stack changes
+## Latency
 
-The stack changed twice over the course of this project - deploy target (local -> Render,
-explored and abandoned -> GCP Cloud Run) and LLM provider (Gemini -> Claude). Render was replaced
-*before* it was ever load-tested at the deployed level, so there's no real deployed-Render number
-to put in this table - rather than invent one, here's what was actually measured, each one dated
-and reproducible via the scripts named below:
+Real, measured numbers, not estimates - comparing what's actually available. Isolated hops,
+local dev: Gemini's LLM call round-trip ran 696-785ms, Calendar `freebusy.query` 1212-2623ms,
+edge-tts first-byte 892-1025ms. After switching to Claude, the same isolated hops: Claude's call
+round-trip 1395-2039ms (higher than Gemini's number above, but not an apples-to-apples
+comparison - Claude's tool-use call sends ~2400 input tokens across 10 tool schemas, versus a
+bare text completion for the Gemini benchmark), Calendar 1121-1166ms, edge-tts 771-780ms.
+Against the live deployed service (Google Cloud Run + Claude), full end-to-end client-observed
+timing: reply text ready in 1.75-2.4s, all TTS audio ready in 2.8-3.7s, with the perceived-
+latency filler arriving in under 20ms every time.
 
-| | Isolated LLM call | Isolated Calendar call | Isolated TTS first-byte | Full turn, live deployed |
-|---|---|---|---|---|
-| **Local dev + Gemini** (2026-07-26, pre-GCP) | 696-785 ms | 1212-2623 ms | 892-1025 ms | not deployed yet |
-| **Local dev + Claude** (2026-07-27) | 1395-2039 ms | 1121-1166 ms | 771-780 ms | n/a (see next row) |
-| **GCP Cloud Run + Claude** (2026-07-27, current) | - | - | - | 1751-2397 ms reply text, 2840-3688 ms full audio |
-| **Render** (any provider) | never benchmarked - dropped before a deployed measurement existed | | | |
-
-A fresh attempt to also re-measure Gemini's isolated call today hung indefinitely (100+ seconds,
-no response) rather than returning a number - consistent with the free-tier quota exhaustion
-documented in `app/config.py`, and itself a small live demonstration of why Claude is the
-default now. Full numbers, methodology, and the reasoning behind each gap are in
-`docs/latency.md`; the actual latency-reduction techniques applied (concurrent clause synthesis,
-a perceived-latency filler, singleton clients, response caching) are in
-[Voice pipeline](#voice-pipeline-stttts) below.
+Render was replaced before it was ever load-tested at the deployed level (see
+[Explored and rejected: Render](#explored-and-rejected-render) below), so there's no comparable
+deployed-Render number to include - rather than estimate one, this section only shows what was
+actually measured. Full methodology and more numbers: `docs/latency.md`.
 
 ---
 
@@ -329,18 +323,10 @@ there's no reason to withhold it just because one backend needs it less.
 
 ### Why Claude over Gemini
 
-Side-by-side testing (2026-07-27) on the exact phrases that broke Gemini this project's session:
-Claude Haiku 4.5 scored 18/18 clean across a combined battery (10 basic single/multi-turn
-scenarios + 8 covering all 6 assignment hard cases), including every one of Gemini's worst
-failures, with zero regex fallbacks needed for the serious ones. Cost is roughly $0.003/call
-(~$3 per 1000 full conversations) on Haiku 4.5's pricing - negligible for this project's scale.
-
-Gemini's free tier also turned out to have a real, undocumented **20-requests-per-day** cap on
-both `gemini-3.5-flash` and `gemini-3.6-flash` (not the ~1500 RPD commonly quoted elsewhere for
-Gemini's free tier) - confirmed by waiting out the API's own reported `retryDelay`, then waiting
-100+ seconds completely untouched, and still getting `429`s both times, on both models, on
-different days. `gemini-flash-lite-latest` was the only Gemini model with consistently usable
-free-tier quota, which is why it's still the default if `LLM_PROVIDER=gemini` is chosen.
+Side-by-side testing on the exact phrases that broke Gemini this project's session: Claude
+Haiku 4.5 scored 18/18 clean across a combined battery (10 basic single/multi-turn scenarios + 8
+covering all 6 assignment hard cases), including every one of Gemini's worst failures, with zero
+regex fallbacks needed for the serious ones.
 
 ## Deterministic overrides - when the dialogue layer doesn't trust the LLM
 
@@ -362,8 +348,8 @@ prompt instructions - but even after moving to Claude, the fix stayed, because t
 belongs in code has nothing to do with model quality.)
 
 **Reason 2 - state-merging that no LLM call is asked to do.** Two bugs found via live testing
-(2026-07-27) both had the same shape: the user's message only *partially* corrected an
-established multi-field constraint, and the LLM's fresh classification silently discarded the
+both had the same shape: the user's message only *partially* corrected an established
+multi-field constraint, and the LLM's fresh classification silently discarded the
 rest of it.
 
 - *"Before my flight Friday at 6pm" → offers Monday slots → "no, I want it on Friday only"* was
@@ -405,41 +391,6 @@ assignment brief describes. Clause boundaries are the natural chunk unit instead
 synthesizes all of a reply's clauses concurrently (not sequentially) and delivers them back to the
 browser in order as each becomes ready, so a 3-clause reply's total synthesis time collapses
 toward the slowest single clause instead of the sum of all three.
-
-### Latency-reduction techniques actually implemented
-
-800ms end-to-end was never realistically achievable on this stack (see the
-[latency table](#latency-across-the-stack-changes) above and `docs/latency.md`), so the actual
-work went into closing the gap between real and *felt* latency, plus trimming what's cheap to
-trim:
-
-- **Perceived-latency mask** - a short filler clause ("Let me check that...") is synthesized
-  once at server startup (pre-warmed, so not even the very first real turn pays for it) and sent
-  immediately, while the real LLM/resolve/calendar work runs in the background. This is the
-  single biggest lever: the table above shows filler audio arriving in under 20ms on every real
-  measurement, regardless of how long the actual turn takes.
-- **Concurrent TTS clause synthesis** (`tts/streamer.py`) - all of a reply's clauses start
-  synthesizing at the same time via `asyncio.create_task`, not one after another; only *delivery*
-  order is preserved, not synthesis order. A 3-clause reply's total synthesis time collapses
-  toward the slowest single clause instead of the sum of all three.
-- **In-memory TTS clause cache** (`tts/streamer.py`) - exact boilerplate clauses repeated across
-  many turns ("Should I book it?", "Anything else?") are cached after first synthesis, so a real
-  `edge-tts` network call only happens once per distinct clause, not once per turn.
-- **Singleton LLM clients** (`gemini_backend.py`/`anthropic_backend.py`'s `_get_client()`) - built
-  once per process at first use, not reconstructed per request, avoiding a repeated TLS/auth
-  handshake on every single turn.
-- **Per-conversation Calendar lookup cache** (`dialogue/manager.py`'s `_event_cache`/
-  `_last_meeting_cache`) - if a turn already resolved a named event or "last meeting today" via a
-  real Calendar API call, a later turn in the *same* conversation (e.g. a duration-only
-  correction that re-triggers `resolve()`) reuses that result instead of querying again.
-- **One freebusy query per search window, not per candidate slot** (`scheduling/slot_finder.py`)
-  - candidates are generated and filtered against a single real `freebusy.query` response per
-    window, rather than checking each 30-minute grid point with its own API call.
-
-Not implemented, and worth naming honestly: batching multiple *different* Calendar API calls
-(e.g. an event lookup and a freebusy check in the same turn) into one `BatchHttpRequest` was in
-the original project plan's latency backlog, but never actually built - the caching techniques
-above turned out to cover the cases that came up in practice.
 
 ## Testing strategy
 
