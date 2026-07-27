@@ -62,6 +62,12 @@ function playNext() {
   const src = audioQueue.shift();
   if (!src) {
     isPlaying = false;
+    // Re-open the mic the instant the bot finishes speaking, not when the user gets around to
+    // tapping it - the engine's own startup lag (see startListening below) then has the whole
+    // gap between "reply audio ends" and "person actually starts talking" to complete, instead
+    // of eating into it. Only kicks in once mic permission has already been granted once (via
+    // an initial manual tap) - never auto-prompts for permission on its own.
+    if (hasListenedBefore) startListening();
     return;
   }
   isPlaying = true;
@@ -77,6 +83,8 @@ let recognition = null;
 let mediaRecorder = null;
 let recordedChunks = [];
 let listening = false;
+let hasListenedBefore = false;
+let accumulatedTranscript = "";
 
 function sendTranscript(text, source) {
   logEntry(text, "user");
@@ -91,18 +99,30 @@ function setListening(value) {
   micBtn.setAttribute("aria-label", value ? "Stop speaking" : "Start speaking");
 }
 
+// Shared by the manual tap and the auto-relisten-after-reply trigger below, so both go through
+// the exact same startup path (and both benefit from onstart gating "Listening" on real
+// readiness, not just the call to start()).
+function startListening() {
+  if (!recognition || listening) return;
+  accumulatedTranscript = "";
+  micBtn.disabled = true; // briefly, until onstart confirms the engine is actually ready
+  micHint.textContent = "Starting…";
+  recognition.start();
+  hasListenedBefore = true;
+}
+
 if (SpeechRecognition) {
   recognition = new SpeechRecognition();
   // continuous=false made Chrome end the whole session on the FIRST brief pause mid-sentence,
   // silently truncating anything said after it (e.g. "schedule a meeting for next Wednesday"
   // <pause> "at 3pm" would only ever send the first half) - found from real usage where several
   // turns arrived as obvious sentence fragments. continuous=true keeps listening across pauses;
-  // the session now only ends when the user deliberately taps the mic again to stop.
+  // the session now only ends when the user deliberately taps the mic again to stop, or the
+  // browser's own silence timeout ends it (see onend - it does NOT auto-relisten itself, only a
+  // genuinely new bot reply does, so a quiet room doesn't turn into a listening loop).
   recognition.continuous = true;
   recognition.interimResults = false;
   recognition.lang = "en-US";
-
-  let accumulatedTranscript = "";
 
   recognition.onresult = (event) => {
     // In continuous mode a single session can still emit multiple separate final results (one
@@ -132,7 +152,9 @@ if (SpeechRecognition) {
   // initializing - so the UI was lying about being ready. onstart fires only once the engine is
   // truly capturing, so gating the "Listening" cue on it instead of on the tap means the user
   // only ever sees "Listening" once it's genuinely true - no arbitrary wait imposed, just an
-  // honest signal instead of an optimistic one.
+  // honest signal instead of an optimistic one. Combined with the auto-relisten in playNext()
+  // above, the engine now gets a head start on that same warm-up during the reply's own audio
+  // playback, rather than only starting once someone taps.
   recognition.onstart = () => {
     setListening(true);
   };
@@ -141,10 +163,7 @@ if (SpeechRecognition) {
     if (listening) {
       recognition.stop();
     } else {
-      accumulatedTranscript = "";
-      micBtn.disabled = true; // briefly, until onstart confirms the engine is actually ready
-      micHint.textContent = "Starting…";
-      recognition.start();
+      startListening();
     }
   };
 } else {
