@@ -84,6 +84,26 @@ def test_reject_with_relative_later_hint_shifts_the_day_part_forward():
     assert hinted.raw_phrase == "Friday evening"
 
 
+def test_reject_with_stated_weekday_against_a_deadline_preserves_the_deadline_time():
+    """The LLM's classification of "no, I want it on Friday only" is non-deterministic between
+    a fresh simple_datetime (caught by _try_merge_bare_day_correction) and a bare reject_all -
+    found on a second live test of the exact same phrase that fixed the first path. Both need
+    the same deadline-preserving merge, just reached from a different classification path."""
+    manager = DialogueManager(now_fn=lambda: NOW, freebusy_fn=_always_free)
+    manager.state.established_expression = DeadlineBefore(
+        anchor_weekday="friday", anchor_time="18:00", buffer_minutes=0, duration_minutes=30
+    )
+    manager.state.duration_minutes = 30
+    manager.state.phase = "confirming"
+    manager.state.top_candidates = [TimeWindow(start=NOW, end=NOW + dt.timedelta(minutes=30))]
+
+    hinted = manager._try_apply_rejection_hint("no, I want it on Friday only")
+
+    assert isinstance(hinted, DeadlineBefore)
+    assert hinted.anchor_weekday == "friday"
+    assert hinted.anchor_time == "18:00"
+
+
 def test_plain_rejection_with_no_hint_still_falls_through_to_the_generic_reply():
     """A bare rejection with no stated preference at all must not be force-matched into some
     invented day-part - this is the existing, correct behavior and must not regress."""

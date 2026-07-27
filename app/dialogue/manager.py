@@ -373,18 +373,36 @@ class DialogueManager:
         return reply
 
     def _try_apply_rejection_hint(self, transcript: str) -> Optional[TemporalExpression]:
-        """If the user rejects the offered slots AND states a day-part hint about what would
-        work instead ("none of those work, how about the afternoon", "any other options, later
-        in the day"), re-search with that hint applied instead of silently discarding it and
-        asking a generic follow-up question.
+        """If the user rejects the offered slots AND states a hint about what would work
+        instead, re-search with that hint applied instead of silently discarding it and asking a
+        generic follow-up question. Two shapes, found via live testing (2026-07-27):
 
-        Found via live testing (2026-07-27): both phrasings above got classified as a bare
-        reject_all, and the reply just asked "what day or time would work better?" - technically
-        not wrong, but it ignored a preference the user had already stated in the same breath.
+        1. A day-part hint against a SimpleDateTime constraint ("none of those work, how about
+           the afternoon", "any other options, later in the day").
+        2. A stated weekday against a DeadlineBefore constraint ("no, I want it on Friday only")
+           - found on a SECOND live test of the same phrase that fixed
+           _try_merge_bare_day_correction: the LLM's classification of this exact message is
+           non-deterministic between a fresh simple_datetime (caught by that fix) and a bare
+           reject_all (which neither that fix nor the day-part check above could catch, since
+           "Friday" is a weekday, not a day-part). Both outcomes need the same deadline-preserving
+           merge, just reached from a different classification path.
 
-        Scoped to SimpleDateTime established constraints (the pattern found in real testing) -
-        other kinds don't have a day-part concept to swap in the same way."""
+        In both cases the fix stays scoped to the exact kind/pattern reproduced - other kinds
+        don't have a day-part or single-anchor-weekday concept to swap in the same way."""
         established = self.state.established_expression
+
+        if isinstance(established, DeadlineBefore):
+            stated_weekday = helpers.extract_stated_weekday(transcript)
+            if stated_weekday is None:
+                return None
+            return DeadlineBefore(
+                anchor_weekday=helpers.WEEKDAY_NAMES[stated_weekday],
+                anchor_time=established.anchor_time,
+                buffer_minutes=established.buffer_minutes,
+                earliest_time=established.earliest_time,
+                duration_minutes=established.duration_minutes,
+            )
+
         if not isinstance(established, SimpleDateTime) or established.raw_phrase is None:
             return None
         current_day_part = helpers.day_part_in_phrase(established.raw_phrase)
