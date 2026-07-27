@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import re
 from typing import Optional
 
 import dateparser
@@ -27,7 +28,15 @@ from app.dateresolve.resolver import (
 )
 from app.dialogue import templates
 from app.llm.client import LLMExtractionError, extract_intent
-from app.schemas import ContextualReference, DurationUpdate, OutOfScope, SimpleDateTime, SlotDecision, TemporalExpression
+from app.schemas import (
+    ContextualReference,
+    DeadlineBefore,
+    DurationUpdate,
+    OutOfScope,
+    SimpleDateTime,
+    SlotDecision,
+    TemporalExpression,
+)
 from app.scheduling.ranking import rank_candidates
 from app.scheduling.slot_finder import FreebusyFn, find_available_slots_with_fallback
 from app.state import SessionState
@@ -73,6 +82,32 @@ _ORDINAL_SELECTORS = {
 
 
 _FAST_PATH_MAX_WORDS = 5
+
+_LATER_RE = re.compile(r"\blater\b", re.IGNORECASE)
+_EARLIER_RE = re.compile(r"\bearlier\b", re.IGNORECASE)
+_DAY_PART_ORDER = list(helpers.DAY_PART_WINDOWS.keys())  # ["morning", "afternoon", "evening", "night"]
+
+
+def _shifted_day_part(current: Optional[str], transcript: str) -> Optional[str]:
+    """Resolves a rejection message's day-part hint - either a day-part word stated directly
+    ("how about the afternoon instead") or a relative "later"/"earlier" nudge relative to
+    whatever day-part was last searched ("any other options, later in the day" - no literal
+    day-part word here, just a direction). Falls back to a reasonable default (afternoon/morning)
+    when there was no day-part in the original search to shift from. Returns None if the message
+    carries no day-part hint at all, so the caller falls through to the existing generic
+    "what day or time would work better?" reply."""
+    stated = helpers.day_part_in_phrase(transcript)
+    if stated is not None:
+        return stated
+    if _LATER_RE.search(transcript):
+        if current in _DAY_PART_ORDER and _DAY_PART_ORDER.index(current) + 1 < len(_DAY_PART_ORDER):
+            return _DAY_PART_ORDER[_DAY_PART_ORDER.index(current) + 1]
+        return "afternoon" if current is None else None
+    if _EARLIER_RE.search(transcript):
+        if current in _DAY_PART_ORDER and _DAY_PART_ORDER.index(current) > 0:
+            return _DAY_PART_ORDER[_DAY_PART_ORDER.index(current) - 1]
+        return "morning" if current is None else None
+    return None
 
 
 def _looks_like_confirmation(text: str) -> bool:
@@ -179,7 +214,7 @@ class DialogueManager:
         if isinstance(intent, OutOfScope):
             return templates.out_of_scope()
         if isinstance(intent, SlotDecision):
-            return self._handle_slot_decision(intent)
+            return self._handle_slot_decision(intent, transcript)
         if isinstance(intent, DurationUpdate):
             return self._handle_duration_update(intent.duration_minutes)
         if isinstance(intent, ContextualReference):
@@ -229,7 +264,45 @@ class DialogueManager:
         intent = SimpleDateTime(duration_minutes=self.state.duration_minutes, raw_phrase=raw_phrase)
         return self._handle_fresh_constraint(intent)
 
+    def _try_merge_bare_day_correction(self, intent: TemporalExpression) -> TemporalExpression:
+        """If the established constraint is a DeadlineBefore and the new message is JUST a bare
+        weekday name (optionally with a "next/this/coming/on" prefix) with nothing else stated,
+        treat it as a correction to the established deadline's anchor_weekday rather than a
+        brand new, poorer constraint that silently drops anchor_time/buffer_minutes/earliest_time.
+
+        Found via live testing (2026-07-27): "before my flight Friday at 6pm" offered Monday
+        slots; replying "no, I want it on Friday only" was being reclassified as a bare
+        simple_datetime for "Friday", discarding the 6pm deadline entirely - it only LOOKED
+        correct because ranking happens to prefer morning slots anyway, which coincidentally sit
+        before 6pm regardless of whether the deadline was actually honored. Deterministic because
+        the model has no way to know it should reconstruct the rest of the constraint from
+        context just because the new message only restated one field - the same class of
+        judgment call already handled deterministically elsewhere in this file (see
+        _resolve_explicit_time_during_confirmation).
+
+        Scoped to DeadlineBefore specifically (the reproduced case) - other kinds either don't
+        have a single anchor weekday to correct (event_relative, dynamic_buffer) or this exact
+        failure mode wasn't observed for them."""
+        established = self.state.established_expression
+        if not isinstance(established, DeadlineBefore):
+            return intent
+        if not isinstance(intent, SimpleDateTime) or intent.raw_phrase is None:
+            return intent
+        candidate = helpers.strip_weekday_prefix(intent.raw_phrase)
+        try:
+            weekday_index = helpers.weekday_index(candidate)
+        except ValueError:
+            return intent  # more than just a bare weekday - trust it as a genuine fresh request
+        return DeadlineBefore(
+            anchor_weekday=helpers.WEEKDAY_NAMES[weekday_index],
+            anchor_time=established.anchor_time,
+            buffer_minutes=established.buffer_minutes,
+            earliest_time=established.earliest_time,
+            duration_minutes=intent.duration_minutes if intent.duration_minutes is not None else established.duration_minutes,
+        )
+
     def _handle_fresh_constraint(self, intent: TemporalExpression) -> list[str]:
+        intent = self._try_merge_bare_day_correction(intent)
         # A fresh constraint - replaces whatever was established before.
         self.state.established_expression = intent
         self.state.top_candidates = []
@@ -299,7 +372,32 @@ class DialogueManager:
         reply, _ = self._search_and_reply()
         return reply
 
-    def _handle_slot_decision(self, intent: SlotDecision) -> list[str]:
+    def _try_apply_rejection_hint(self, transcript: str) -> Optional[TemporalExpression]:
+        """If the user rejects the offered slots AND states a day-part hint about what would
+        work instead ("none of those work, how about the afternoon", "any other options, later
+        in the day"), re-search with that hint applied instead of silently discarding it and
+        asking a generic follow-up question.
+
+        Found via live testing (2026-07-27): both phrasings above got classified as a bare
+        reject_all, and the reply just asked "what day or time would work better?" - technically
+        not wrong, but it ignored a preference the user had already stated in the same breath.
+
+        Scoped to SimpleDateTime established constraints (the pattern found in real testing) -
+        other kinds don't have a day-part concept to swap in the same way."""
+        established = self.state.established_expression
+        if not isinstance(established, SimpleDateTime) or established.raw_phrase is None:
+            return None
+        current_day_part = helpers.day_part_in_phrase(established.raw_phrase)
+        new_day_part = _shifted_day_part(current_day_part, transcript)
+        if new_day_part is None:
+            return None
+        day_only = helpers.strip_day_part(established.raw_phrase) if current_day_part else established.raw_phrase
+        if helpers.phrase_has_explicit_time(day_only):
+            return None  # an explicit time was already stated - a day-part hint doesn't cleanly override that
+        new_raw_phrase = f"{day_only} {new_day_part}".strip()
+        return SimpleDateTime(raw_phrase=new_raw_phrase, duration_minutes=self.state.duration_minutes)
+
+    def _handle_slot_decision(self, intent: SlotDecision, transcript: str) -> list[str]:
         """LLM fallback for confirm/select/reject, reached only when handle_turn's fast local
         string-match (_parse_slot_selection) couldn't classify the message - see SlotDecision's
         docstring for the real phrasing that broke without this."""
@@ -315,7 +413,11 @@ class DialogueManager:
                 return templates.nothing_pending_to_confirm()
             return self._book_slot(index)
 
-        # reject_all - none of the offered options work; ask what would, rather than guessing.
+        # reject_all - none of the offered options work. If a day-part hint came with the
+        # rejection, act on it instead of just asking a generic follow-up.
+        hinted_intent = self._try_apply_rejection_hint(transcript)
+        if hinted_intent is not None:
+            return self._handle_fresh_constraint(hinted_intent)
         self.state.phase = "searching"
         self.state.top_candidates = []
         return templates.slots_rejected()
