@@ -70,20 +70,19 @@ credentials needed anywhere in the suite).
 
 ## Latency
 
-Real, measured numbers, not estimates - comparing what's actually available. Isolated hops,
-local dev: Gemini's LLM call round-trip ran 696-785ms, Calendar `freebusy.query` 1212-2623ms,
-edge-tts first-byte 892-1025ms. After switching to Claude, the same isolated hops: Claude's call
-round-trip 1395-2039ms (higher than Gemini's number above, but not an apples-to-apples
-comparison - Claude's tool-use call sends ~2400 input tokens across 10 tool schemas, versus a
-bare text completion for the Gemini benchmark), Calendar 1121-1166ms, edge-tts 771-780ms.
-Against the live deployed service (Google Cloud Run + Claude), full end-to-end client-observed
-timing: reply text ready in 1.75-2.4s, all TTS audio ready in 2.8-3.7s, with the perceived-
-latency filler arriving in under 20ms every time.
+The stack changed twice - deploy target and LLM provider - so here's how each combination
+actually performed. Isolated hops, local dev: Gemini's LLM call round-trip ran 696-785ms,
+Calendar `freebusy.query` 1212-2623ms, edge-tts first-byte 892-1025ms. After switching to
+Claude, the same isolated hops: Claude's call round-trip 1395-2039ms (higher than Gemini's
+number above, but not an apples-to-apples comparison - Claude's tool-use call sends ~2400 input
+tokens across 10 tool schemas, versus a bare text completion for the Gemini benchmark), Calendar
+1121-1166ms, edge-tts 771-780ms. Against the live deployed service (Google Cloud Run + Claude),
+full end-to-end client-observed timing: reply text ready in 1.75-2.4s, all TTS audio ready in
+2.8-3.7s, with the perceived-latency filler arriving in under 20ms every time.
 
-Render was replaced before it was ever load-tested at the deployed level (see
-[Explored and rejected: Render](#explored-and-rejected-render) below), so there's no comparable
-deployed-Render number to include - rather than estimate one, this section only shows what was
-actually measured. Full methodology and more numbers: `docs/latency.md`.
+Render was explored and replaced due to deployment limitations before this project reached the
+LLM-comparison stage, so there's no Render number in this comparison. Full methodology and more
+numbers: `docs/latency.md`.
 
 ---
 
@@ -392,6 +391,35 @@ synthesizes all of a reply's clauses concurrently (not sequentially) and deliver
 browser in order as each becomes ready, so a 3-clause reply's total synthesis time collapses
 toward the slowest single clause instead of the sum of all three.
 
+### Latency-reduction techniques actually implemented
+
+800ms end-to-end was never realistically achievable on this stack (see [Latency](#latency)
+above and `docs/latency.md`), so the actual work went into closing the gap between real and
+*felt* latency, plus trimming what's cheap to trim:
+
+- **Perceived-latency mask** - a short filler clause ("Let me check that...") is synthesized
+  once at server startup (pre-warmed, so not even the very first real turn pays for it) and sent
+  immediately, while the real LLM/resolve/calendar work runs in the background. This is the
+  single biggest lever - filler audio arrives in under 20ms on every real measurement, regardless
+  of how long the actual turn takes.
+- **Concurrent TTS clause synthesis** (`tts/streamer.py`) - all of a reply's clauses start
+  synthesizing at the same time via `asyncio.create_task`, not one after another; only *delivery*
+  order is preserved, not synthesis order. A 3-clause reply's total synthesis time collapses
+  toward the slowest single clause instead of the sum of all three.
+- **In-memory TTS clause cache** (`tts/streamer.py`) - exact boilerplate clauses repeated across
+  many turns ("Should I book it?", "Anything else?") are cached after first synthesis, so a real
+  `edge-tts` network call only happens once per distinct clause, not once per turn.
+- **Singleton LLM clients** (`gemini_backend.py`/`anthropic_backend.py`'s `_get_client()`) - built
+  once per process at first use, not reconstructed per request, avoiding a repeated TLS/auth
+  handshake on every single turn.
+- **Per-conversation Calendar lookup cache** (`dialogue/manager.py`'s `_event_cache`/
+  `_last_meeting_cache`) - if a turn already resolved a named event or "last meeting today" via a
+  real Calendar API call, a later turn in the *same* conversation (e.g. a duration-only
+  correction that re-triggers `resolve()`) reuses that result instead of querying again.
+- **One freebusy query per search window, not per candidate slot** (`scheduling/slot_finder.py`)
+  - candidates are generated and filtered against a single real `freebusy.query` response per
+    window, rather than checking each 30-minute grid point with its own API call.
+
 ## Testing strategy
 
 `pytest` runs 125 tests, fully offline - mocked LLM responses (`app/llm/mock_responses.py`,
@@ -445,16 +473,23 @@ to build it.
 - **The 800ms end-to-end latency target isn't realistically met** on this stack - see
   `docs/latency.md` for real measured numbers per hop and the perceived-latency mask used to
   soften it.
-- **A day-part rejection hint only re-searches for `SimpleDateTime`-established constraints,
-  and a bare-weekday deadline correction only merges into `DeadlineBefore`.** Both fixes are
-  scoped to the exact patterns that were actually reproduced via live testing rather than
-  generalized speculatively to every intent kind - see
+- **The reject/correct-with-a-hint fixes only cover the two most common request shapes.**
+  Example that works: ask for "tomorrow morning," reject the offered slots with "how about the
+  afternoon instead," and it correctly re-searches for the afternoon. The same "reject with a
+  hint" pattern isn't covered for the other 4 request kinds (event-anchored, calendar-arithmetic,
+  vague-range, dynamic-buffer) - e.g. reject an event-anchored request's offered slots with "how
+  about the afternoon instead" and it falls back to a generic "what day or time would work
+  better?", dropping the hint. See
   [Deterministic overrides](#deterministic-overrides---when-the-dialogue-layer-doesnt-trust-the-llm).
-- **`deadline_before` has no concept of "restrict to just the deadline day."** Its search window
-  is always "anytime between now and the deadline," by design - so a later message narrowing to
-  the deadline's own day (rather than correcting which day the deadline falls on) won't shrink
-  the search window to just that day, even though the deadline time itself is now correctly
-  preserved across the correction.
+- **A deadline-driven request can't be narrowed to just the deadline's own day.** "45 minutes
+  before my flight Friday at 6pm" means "any time between now and Friday 6pm is fine" - so it may
+  offer an earlier day (whatever's soonest). Saying "actually, Friday only" afterward correctly
+  keeps the 6pm cutoff remembered (that part *is* fixed - it no longer gets silently dropped),
+  but doesn't narrow the search to just Friday, since `deadline_before` has no way to express
+  "restrict to the deadline's own day" - it only knows "the deadline is Friday 6pm," not "and
+  only search on that day." Verified live: asking for "a 30 minute meeting before my 6pm flight
+  on Friday," then "meeting should be on Friday only," returns the exact same (non-Friday) slot
+  both times.
 
 ## Project structure
 
