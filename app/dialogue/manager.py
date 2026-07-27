@@ -9,9 +9,12 @@ import datetime as dt
 import logging
 from typing import Optional
 
+import dateparser
+
 from app import persistence
 from app.calendar_client.client import freebusy as real_freebusy
 from app.calendar_client.client import insert_event as real_insert_event
+from app.dateresolve import helpers
 from app.dateresolve.resolver import (
     CalendarLookupFn,
     LastMeetingLookupFn,
@@ -24,7 +27,7 @@ from app.dateresolve.resolver import (
 )
 from app.dialogue import templates
 from app.llm.client import LLMExtractionError, extract_intent
-from app.schemas import ContextualReference, DurationUpdate, OutOfScope, SimpleDateTime, SlotDecision
+from app.schemas import ContextualReference, DurationUpdate, OutOfScope, SimpleDateTime, SlotDecision, TemporalExpression
 from app.scheduling.ranking import rank_candidates
 from app.scheduling.slot_finder import FreebusyFn, find_available_slots_with_fallback
 from app.state import SessionState
@@ -158,8 +161,12 @@ class DialogueManager:
             selection = _parse_slot_selection(transcript, len(self.state.top_candidates))
             if selection is not None:
                 return self._book_slot(selection)
-            # Not a selection/confirmation (e.g. "actually make it next week instead") - fall
-            # through to normal extraction below.
+
+            explicit_time_reply = self._resolve_explicit_time_during_confirmation(transcript)
+            if explicit_time_reply is not None:
+                return explicit_time_reply
+            # Not a selection/confirmation/explicit-time message (e.g. "actually make it next
+            # week instead") - fall through to normal extraction below.
 
         try:
             with Stopwatch() as sw:
@@ -178,6 +185,51 @@ class DialogueManager:
         if isinstance(intent, ContextualReference):
             return self._handle_contextual_reference(intent)
 
+        return self._handle_fresh_constraint(intent)
+
+    def _resolve_explicit_time_during_confirmation(self, transcript: str) -> Optional[list[str]]:
+        """Returns a reply if this message stated an explicit clock time while slots were being
+        offered, or None if the caller should fall through to normal LLM extraction instead.
+
+        Deliberately deterministic rather than left to the LLM's slot_decision classification -
+        found unreliable via real usage: "book it for 12:00 p.m." when 9:00/9:30/10:00 AM were
+        offered got classified as confirm_top (silently booking the wrong, already-offered slot)
+        roughly 2 times out of 3 in direct repeated testing, despite the prompt explicitly
+        instructing otherwise. A stated time that matches one of the offered candidates books
+        that one; a stated time that matches none of them is a fresh request for that time."""
+        time_token = helpers.extract_time_token(transcript)
+        if time_token is None:
+            return None
+        # Parse the isolated time substring, not the whole sentence - dateparser is unreliable
+        # on a time with filler words around it (confirmed: "book it for 12:00 p.m." -> None,
+        # while the isolated "12:00 p.m." parses fine), the same "leading junk" pattern already
+        # seen with weekday names.
+        parsed = dateparser.parse(time_token, settings={"RELATIVE_BASE": self.now_fn(), "PREFER_DATES_FROM": "future"})
+        if parsed is None:
+            return None
+
+        for index, candidate in enumerate(self.state.top_candidates):
+            if (candidate.start.hour, candidate.start.minute) == (parsed.hour, parsed.minute):
+                return self._book_slot(index)
+
+        # A time that doesn't match any offered candidate - a fresh request for that time. Build
+        # an unambiguous raw_phrase ourselves rather than handing the whole transcript (still
+        # full of "book it for" filler) to the resolver's own dateparser fallback, which would
+        # hit the exact same leading-junk problem all over again. If the message also names a
+        # different weekday, honor that; otherwise assume the same day as what's currently
+        # offered (the obvious reading of "for 12pm instead" mid-confirmation), or today if
+        # nothing was ever offered yet.
+        stated_weekday = helpers.extract_stated_weekday(transcript)
+        if stated_weekday is not None:
+            raw_phrase = f"{helpers.WEEKDAY_NAMES[stated_weekday]} {time_token}"
+        else:
+            target_date = self.state.top_candidates[0].start.date() if self.state.top_candidates else self.now_fn().date()
+            raw_phrase = f"{target_date.isoformat()} {time_token}"
+
+        intent = SimpleDateTime(duration_minutes=self.state.duration_minutes, raw_phrase=raw_phrase)
+        return self._handle_fresh_constraint(intent)
+
+    def _handle_fresh_constraint(self, intent: TemporalExpression) -> list[str]:
         # A fresh constraint - replaces whatever was established before.
         self.state.established_expression = intent
         self.state.top_candidates = []

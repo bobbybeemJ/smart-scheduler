@@ -144,6 +144,38 @@ def test_fast_path_confirmation_does_not_swallow_a_message_with_its_own_new_time
     assert manager.state.top_candidate != offered_slot
 
 
+def test_explicit_time_matching_an_offered_slot_books_it_deterministically():
+    """"book it for 12:00 p.m." (or any short "book it for <time>" phrasing) - found via real
+    usage: even after the fast-path substring/digit fix above, real Gemini's own slot_decision
+    classification confirm_top-ed this roughly 2 times out of 3 in direct repeated testing,
+    silently booking the wrong (already-offered) slot despite a different time being stated.
+    Resolving an explicit stated time deterministically, without going through the LLM at all,
+    doesn't depend on it getting that judgment call right."""
+    manager = DialogueManager(now_fn=lambda: NOW, freebusy_fn=_always_free)
+    manager.handle_turn("Tuesday at 2pm")  # offers 2:00, 2:30, 3:00 PM for 30 minutes
+    assert manager.state.phase == "confirming"
+
+    manager.handle_turn("book it for 2:30 pm")
+
+    assert manager.state.phase == "booked"
+    assert manager.state.resolved_constraints is not None
+
+
+def test_explicit_time_not_matching_any_offered_slot_triggers_a_fresh_search_same_day():
+    """A stated time that ISN'T one of the offered candidates must never be silently treated as
+    a confirmation of one of them - it's a fresh request for that time, on the same day that was
+    already being discussed (the natural reading of "for 5pm instead" mid-confirmation)."""
+    manager = DialogueManager(now_fn=lambda: NOW, freebusy_fn=_always_free)
+    manager.handle_turn("Tuesday at 2pm")  # offers 2:00, 2:30, 3:00 PM
+    offered_day = manager.state.top_candidate.start.date()
+
+    manager.handle_turn("book it for 5:00 pm")
+
+    assert manager.state.phase == "confirming"  # re-offered, not silently booked
+    assert manager.state.top_candidate.start.date() == offered_day
+    assert manager.state.top_candidate.start.hour == 17
+
+
 def test_slot_decision_select_index_via_llm_fallback_when_fast_path_is_ambiguous():
     """"let's go with the earlier one" isn't in manager.py's hardcoded confirmation/ordinal
     phrase tables (_CONFIRMATION_PHRASES/_ORDINAL_SELECTORS), so the fast local match returns

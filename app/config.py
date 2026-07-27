@@ -11,7 +11,16 @@ class Settings(BaseSettings):
 
     use_mock_llm: bool = True
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-flash-lite-latest"
+    gemini_model: str = "gemini-3.6-flash"
+    """Switched from gemini-flash-lite-latest after real-usage testing found the lite model
+    unreliable on compound sentences (duration/day-part combinations correct only ~25-33% of the
+    time; occasional chain-of-thought leaking into structured output fields). gemini-3.6-flash
+    was 6/6 correct on the same fragile phrases, and faster per call (~3s vs 8-10s for
+    gemini-3.5-flash, which is otherwise comparably reliable). Trade-off: free-tier quota for the
+    full flash tier is 5 requests/minute, vs 15 for the lite tier - confirmed empirically via
+    scripts/sanity/list_gemini_models.py and direct rate-limit testing. Acceptable for a voice
+    conversation (STT+TTS overhead naturally paces turns well under 5/minute) but worth
+    revisiting if usage patterns change (e.g. rapid text-based testing)."""
 
     google_oauth_client_id: str = ""
     google_oauth_client_secret: str = ""

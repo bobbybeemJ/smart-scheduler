@@ -80,6 +80,17 @@ def phrase_has_explicit_time(phrase: str) -> bool:
     return bool(_TIME_TOKEN_RE.search(phrase))
 
 
+def extract_time_token(phrase: str) -> Optional[str]:
+    """The matched clock-time substring only (e.g. "12:00 p.m." out of "book it for 12:00
+    p.m."), or None if there isn't one. dateparser is unreliable on a time with filler words
+    around it (confirmed: "book it for 12:00 p.m." -> None, while the isolated "12:00 p.m."
+    parses fine) - the same "leading junk confuses dateparser" pattern as the weekday-prefix
+    issue, just for time tokens instead of weekday names. Parse the isolated substring instead
+    of the whole sentence."""
+    match = _TIME_TOKEN_RE.search(phrase)
+    return match.group(0) if match else None
+
+
 _AMPM_RE = re.compile(r"\b(am|pm|a\.m\.|p\.m\.)\b", re.IGNORECASE)
 
 
