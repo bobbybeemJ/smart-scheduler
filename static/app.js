@@ -85,6 +85,7 @@ function sendTranscript(text, source) {
 
 function setListening(value) {
   listening = value;
+  micBtn.disabled = false;
   micHint.textContent = value ? "Listening… tap again to stop" : "Tap the mic to start speaking";
   micBtn.classList.toggle("listening", value);
   micBtn.setAttribute("aria-label", value ? "Stop speaking" : "Start speaking");
@@ -123,14 +124,27 @@ if (SpeechRecognition) {
     accumulatedTranscript = "";
     if (text) sendTranscript(text, "web_speech");
   };
+  // The recognition engine takes a real, variable moment after start() to actually begin
+  // capturing audio (it's negotiating with a backend service, not just flipping a local flag) -
+  // found from real usage: speaking within ~1-2s of tapping the mic was getting clipped or
+  // missed entirely, because the UI said "Listening…" the instant the button was tapped (set
+  // synchronously, right after calling start()), well before the engine had actually finished
+  // initializing - so the UI was lying about being ready. onstart fires only once the engine is
+  // truly capturing, so gating the "Listening" cue on it instead of on the tap means the user
+  // only ever sees "Listening" once it's genuinely true - no arbitrary wait imposed, just an
+  // honest signal instead of an optimistic one.
+  recognition.onstart = () => {
+    setListening(true);
+  };
 
   micBtn.onclick = () => {
     if (listening) {
       recognition.stop();
     } else {
       accumulatedTranscript = "";
+      micBtn.disabled = true; // briefly, until onstart confirms the engine is actually ready
+      micHint.textContent = "Starting…";
       recognition.start();
-      setListening(true);
     }
   };
 } else {
