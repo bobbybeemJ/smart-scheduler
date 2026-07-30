@@ -46,7 +46,15 @@ def health():
 
 @app.get("/")
 def index():
-    return FileResponse("static/index.html")
+    # Cross-Origin-Opener-Policy + Cross-Origin-Embedder-Policy (credentialless) make this page
+    # cross-origin isolated, which is what grants it SharedArrayBuffer - onnxruntime-web's WASM
+    # binary needs that to load at all (independent of the numThreads=1 pin in index.html, which
+    # only avoids the separate WebGPU/JSEP backend). "credentialless" (not "require-corp") lets
+    # the vad-web/onnxruntime-web CDN scripts load without needing their own CORP headers.
+    response = FileResponse("static/index.html")
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    response.headers["Cross-Origin-Embedder-Policy"] = "credentialless"
+    return response
 
 
 app.mount("/static", StaticFiles(directory="static"), name="static")

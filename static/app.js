@@ -101,86 +101,57 @@ function playNext() {
 }
 
 // --- Voice Activity Detection (end-of-turn) ---
-// Neither STT path had a real, controlled notion of "the user is done talking": the Web Speech
-// engine only stopped on a manual second tap or its own opaque internal silence timeout, and the
-// MediaRecorder fallback was pure push-to-talk. This reads actual mic energy in real time (via
-// Web Audio's AnalyserNode, on a getUserMedia stream requested purely for metering - independent
-// of whatever the STT engine does internally with audio) and ends the turn itself once speech has
-// been detected and then stays below the noise floor for VAD_SILENCE_MS. A brief mid-sentence
-// breath stays under that duration and does not end the turn; continuous=true below still also
-// guards against the recognition engine itself giving up on a short pause. VAD's only
-// responsibility is deciding WHEN to call stop() on whichever engine is active - the existing
-// onend/onstop handlers still own sending the transcript, unchanged regardless of what triggered
-// the stop (manual tap, VAD, or the browser's own timeout as a last-resort backstop).
-const VAD_SILENCE_MS = 1400;
-const VAD_SPEECH_THRESHOLD = 0.02; // normalized RMS (0-1); tune against real mic/room noise floor
-// Cheap, non-LLM stand-in for "does this sound finished": if the last word transcribed before
-// silence is a conjunction/filler that's almost never how a real request ends ("...and", "so",
-// "um"), the speaker is very likely mid-thought, not done - so silence is given extra room before
-// ending the turn. Only extends the wait, never shortens it below VAD_SILENCE_MS, so this can only
-// reduce false cutoffs, never introduce a new "ended too early" case that wasn't already possible.
-const VAD_TRAILING_GRACE_MS = 700;
-const VAD_INCOMPLETE_TRAILING_WORDS = new Set([
-  "and", "but", "or", "so", "because", "um", "uh", "like",
-  "the", "a", "an", "to", "for", "with", "at", "in", "on",
-  "is", "was", "my", "our", "that", "if", "when", "i", "we",
-  "let", "lets", "let's", "gonna", "going",
-]);
-let vadAudioCtx = null;
-let vadAnalyser = null;
-let vadRafId = null;
-let vadHasSpoken = false;
-let vadLastSpeechAt = 0;
+// Real neural VAD (Silero, via @ricky0123/vad-web running client-side in WASM - see index.html
+// for the script tags) instead of a hand-rolled RMS energy threshold. A trained speech/non-speech
+// classifier is far more robust to mic gain and background noise than a fixed amplitude number,
+// and its silence-duration handling (redemptionMs, left at the library default of 1400ms - the
+// same number this app had already independently converged on by hand) is tuned by people who
+// benchmark this for a living, not guessed at here. positiveSpeechThreshold/negativeSpeechThreshold
+// are overridden to more conservative values than the library default (0.3/0.25), matching a
+// tested configuration seen working in another real voice-agent implementation of this same kind
+// of app, to reduce false triggers from background noise.
+//
+// One MicVAD instance is created once - pre-warmed at page load rather than on first mic tap,
+// since loading the ONNX model over the network/cache takes a real moment we don't want eating
+// into the gap between "bot finishes speaking" and "user can talk" - and reused for the whole
+// page session via start()/pause() rather than recreated per turn (recreating it would reload the
+// model every time). It manages its own internal getUserMedia stream, independent of whatever the
+// active STT engine does with audio - VAD's only job is still deciding WHEN to call stop() on
+// whichever STT engine is active; the existing onend/onstop handlers still own sending the
+// transcript. If the model fails to load (offline, CDN blocked, no WASM support), startVAD()'s
+// caller proceeds without it - the browser's own internal recognition timeout remains as a
+// last-resort backstop, same as before VAD existed at all.
+let vadInstance = null;
+let vadReadyPromise = null;
 
-// accumulatedTranscript is declared further down but already initialized by the time this ever
-// runs (tick() only fires asynchronously, well after the whole script has executed top-to-bottom).
-function vadSilenceDeadline() {
-  const words = accumulatedTranscript.trim().split(/\s+/);
-  const last = (words[words.length - 1] || "").toLowerCase().replace(/[^a-z']/g, "");
-  return VAD_INCOMPLETE_TRAILING_WORDS.has(last) ? VAD_SILENCE_MS + VAD_TRAILING_GRACE_MS : VAD_SILENCE_MS;
-}
-
-function startVAD(stream) {
-  stopVAD();
-  vadAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  vadAudioCtx.resume().catch(() => {}); // some browsers start a fresh context suspended
-  const source = vadAudioCtx.createMediaStreamSource(stream);
-  vadAnalyser = vadAudioCtx.createAnalyser();
-  vadAnalyser.fftSize = 512;
-  source.connect(vadAnalyser);
-  const data = new Uint8Array(vadAnalyser.fftSize);
-  vadHasSpoken = false;
-  vadLastSpeechAt = 0;
-
-  function tick() {
-    vadAnalyser.getByteTimeDomainData(data);
-    let sumSquares = 0;
-    for (let i = 0; i < data.length; i++) {
-      const centered = (data[i] - 128) / 128;
-      sumSquares += centered * centered;
-    }
-    const rms = Math.sqrt(sumSquares / data.length);
-    const now = Date.now();
-    if (rms > VAD_SPEECH_THRESHOLD) {
-      vadHasSpoken = true;
-      vadLastSpeechAt = now;
-    } else if (vadHasSpoken && now - vadLastSpeechAt > vadSilenceDeadline()) {
-      // Triggers stop() on whichever engine is active; its onend/onstop handler calls stopVAD()
-      // once the stop actually completes - just don't reschedule another tick from here.
-      endTurnFromVAD();
-      return;
-    }
-    vadRafId = requestAnimationFrame(tick);
+function ensureVAD() {
+  if (!vadReadyPromise) {
+    vadReadyPromise = vad.MicVAD.new({
+      startOnLoad: false, // we control exactly when listening begins, via startVAD()
+      positiveSpeechThreshold: 0.6,
+      negativeSpeechThreshold: 0.35,
+      onSpeechEnd: () => endTurnFromVAD(),
+    }).then((instance) => {
+      vadInstance = instance;
+      return instance;
+    }).catch((err) => {
+      vadReadyPromise = null; // allow a retry on the next call instead of failing forever
+      throw err;
+    });
   }
-  vadRafId = requestAnimationFrame(tick);
+  return vadReadyPromise;
+}
+ensureVAD().catch((err) => {
+  logEntry(`Voice activity detection unavailable (${err.message}) - falling back to manual/browser timeout.`, "error");
+}); // pre-warm on page load, well before the first turn needs it
+
+async function startVAD() {
+  const instance = await ensureVAD();
+  await instance.start();
 }
 
 function stopVAD() {
-  if (vadRafId) cancelAnimationFrame(vadRafId);
-  vadRafId = null;
-  if (vadAudioCtx) vadAudioCtx.close().catch(() => {});
-  vadAudioCtx = null;
-  vadAnalyser = null;
+  if (vadInstance) vadInstance.pause();
 }
 
 function endTurnFromVAD() {
@@ -223,9 +194,10 @@ function releaseMicStream() {
 
 // Shared by the manual tap and the auto-relisten-after-reply trigger below, so both go through
 // the exact same startup path (and both benefit from onstart gating "Listening" on real
-// readiness, not just the call to start()). getUserMedia is requested here - and awaited -
-// before recognition.start(), purely so VAD has a raw audio stream to meter; the Web Speech
-// engine still does its own separate internal capture and is unaffected by this stream.
+// readiness, not just the call to start()). startVAD() requests its own mic access internally
+// (see above) - the Web Speech engine does its own separate internal capture too, unaffected by
+// VAD's stream. If VAD fails to start, listening still proceeds without it rather than blocking
+// the user out of voice input entirely.
 async function startListening() {
   if (!recognition || listening) return;
   accumulatedTranscript = "";
@@ -233,14 +205,10 @@ async function startListening() {
   micHint.textContent = "Starting…";
   hasListenedBefore = true;
   try {
-    currentMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    await startVAD();
   } catch (err) {
-    logEntry("Microphone permission is required to listen.", "error");
-    micBtn.disabled = false;
-    micHint.textContent = "Tap the mic to start speaking";
-    return;
+    logEntry(`Voice activity detection unavailable (${err.message}) - tap the mic again to stop.`, "error");
   }
-  startVAD(currentMicStream);
   recognition.start();
 }
 
@@ -270,12 +238,10 @@ if (SpeechRecognition) {
     logEntry(`recognition error: ${e.error}`, "error");
     setListening(false); // otherwise an error left the button stuck showing "tap to stop"
     stopVAD();
-    releaseMicStream();
   };
   recognition.onend = () => {
     setListening(false);
     stopVAD();
-    releaseMicStream();
     const text = accumulatedTranscript.trim();
     accumulatedTranscript = "";
     if (text) sendTranscript(text, "web_speech");
@@ -321,7 +287,11 @@ if (SpeechRecognition) {
       };
       mediaRecorder.start();
       setListening(true);
-      startVAD(stream);
+      try {
+        await startVAD();
+      } catch (err) {
+        logEntry(`Voice activity detection unavailable (${err.message}) - tap the mic again to stop.`, "error");
+      }
     } else {
       mediaRecorder.stop();
       setListening(false);
