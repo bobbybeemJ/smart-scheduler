@@ -8,7 +8,20 @@ from __future__ import annotations
 import datetime as dt
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from app.calendar_client import client as calendar_client
+
+
+@pytest.fixture(autouse=True)
+def _clear_freebusy_cache():
+    # The freebusy cache is module-level (process-lifetime, not per-session - see client.py's
+    # own docstring on why that's safe for this single-tenant app), so it persists across tests
+    # in this file unless reset - without this, a later test reusing the same window as an
+    # earlier one would silently get that earlier test's mocked response instead of its own.
+    calendar_client._freebusy_cache.clear()
+    yield
+    calendar_client._freebusy_cache.clear()
 
 
 def _mock_service():
@@ -88,6 +101,46 @@ def test_freebusy_sends_timezone_aware_bounds_and_parses_busy_periods_to_naive_l
 
     assert result == [{"start": dt.datetime(2026, 7, 28, 14, 0), "end": dt.datetime(2026, 7, 28, 14, 30)}]
     assert result[0]["start"].tzinfo is None
+
+
+def test_freebusy_reuses_cached_result_for_the_identical_window():
+    service = _mock_service()
+    service.freebusy().query().execute.return_value = {
+        "calendars": {"primary": {"busy": [{"start": "2026-07-28T14:00:00+05:30", "end": "2026-07-28T14:30:00+05:30"}]}}
+    }
+    start, end = dt.datetime(2026, 7, 28, 9, 0), dt.datetime(2026, 7, 28, 17, 0)
+
+    with patch.object(calendar_client, "get_calendar_service", return_value=service):
+        first = calendar_client.freebusy(start, end)
+        second = calendar_client.freebusy(start, end)
+
+    assert first == second
+    assert service.freebusy().query().execute.call_count == 1  # second call was served from cache
+
+
+def test_freebusy_does_not_reuse_cache_for_a_different_window():
+    service = _mock_service()
+    service.freebusy().query().execute.return_value = {"calendars": {"primary": {"busy": []}}}
+
+    with patch.object(calendar_client, "get_calendar_service", return_value=service):
+        calendar_client.freebusy(dt.datetime(2026, 7, 28, 9, 0), dt.datetime(2026, 7, 28, 17, 0))
+        calendar_client.freebusy(dt.datetime(2026, 7, 29, 9, 0), dt.datetime(2026, 7, 29, 17, 0))
+
+    assert service.freebusy().query().execute.call_count == 2
+
+
+def test_insert_event_invalidates_the_freebusy_cache():
+    service = _mock_service()
+    service.freebusy().query().execute.return_value = {"calendars": {"primary": {"busy": []}}}
+    service.events().insert().execute.return_value = {"id": "new-event-id"}
+    start, end = dt.datetime(2026, 7, 28, 9, 0), dt.datetime(2026, 7, 28, 17, 0)
+
+    with patch.object(calendar_client, "get_calendar_service", return_value=service):
+        calendar_client.freebusy(start, end)  # populates the cache
+        calendar_client.insert_event("Meeting", dt.datetime(2026, 7, 28, 14, 0), dt.datetime(2026, 7, 28, 14, 30))
+        calendar_client.freebusy(start, end)  # must hit the API again, not the now-stale cache
+
+    assert service.freebusy().query().execute.call_count == 2
 
 
 def test_insert_event_sends_timezone_field_alongside_datetime():

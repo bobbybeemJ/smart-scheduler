@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.calendar_client.client import warmup as warmup_calendar_client
 from app.tts.streamer import check_engine_health, synthesize_filler
 from app.ws.handler import websocket_endpoint
 
@@ -19,6 +20,11 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Runs in a background thread and doesn't block startup - just gives the DNS+TLS handshake
+    # to Google's API host a head start so the first real freebusy/insert call of the process
+    # doesn't also pay for it.
+    warmup_calendar_client()
+
     logger.info("Running boot-time TTS engine health check...")
     health = await check_engine_health()
     logger.info("TTS engine health: %s", health)

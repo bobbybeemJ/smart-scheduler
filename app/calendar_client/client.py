@@ -12,6 +12,7 @@ naive datetimes are all the rest of the codebase ever has to deal with."""
 from __future__ import annotations
 
 import datetime as dt
+import time
 from typing import Optional
 from zoneinfo import ZoneInfo
 
@@ -66,6 +67,33 @@ def get_calendar_service() -> Resource:
     return _service
 
 
+def warmup() -> None:
+    """Pre-resolve DNS and warm the TCP/TLS connection to Google's API host in a background
+    thread at server startup, so the first real freebusy/insert call of the process doesn't also
+    pay for that handshake - see the plan's latency optimization backlog. Single-user app, so
+    there's no per-request budget being spent here; this only ever runs once, at boot."""
+    import threading
+    import urllib.request
+
+    def _do() -> None:
+        try:
+            urllib.request.urlopen("https://www.googleapis.com/", timeout=5)
+        except Exception:
+            pass  # any response at all (even 404/403) means DNS+TLS already succeeded
+
+    threading.Thread(target=_do, daemon=True).start()
+
+
+# Process-level cache, not per-session: this app deliberately has exactly one calendar (one
+# hardcoded refresh token, no multi-tenant login - see the plan's scope decision), so there is
+# only ever one user's data to cache and no cross-user leakage risk. Keyed on the exact queried
+# window, since callers (slot_finder) already collapse a search into one freebusy call per
+# window rather than per-candidate - re-querying the identical window happens across turns
+# (duration change, check-then-book) but the window bounds are the same both times.
+_freebusy_cache: dict[tuple[str, str, str], tuple[list[dict], float]] = {}
+FREEBUSY_CACHE_TTL_SECONDS = 300  # matches the tested value from a comparable reference implementation
+
+
 @_retry_transient
 def list_calendars() -> list[dict]:
     service = get_calendar_service()
@@ -111,18 +139,27 @@ def find_last_event_of_day(day: dt.date, calendar_id: str = "primary") -> Option
 
 @_retry_transient
 def freebusy(start: dt.datetime, end: dt.datetime, calendar_id: str = "primary") -> list[dict]:
+    key = (_localize(start).isoformat(), _localize(end).isoformat(), calendar_id)
+    cached = _freebusy_cache.get(key)
+    if cached is not None:
+        busy_periods, expires_at = cached
+        if time.monotonic() < expires_at:
+            return busy_periods
+
     service = get_calendar_service()
     body = {
-        "timeMin": _localize(start).isoformat(),
-        "timeMax": _localize(end).isoformat(),
+        "timeMin": key[0],
+        "timeMax": key[1],
         "items": [{"id": calendar_id}],
     }
     result = service.freebusy().query(body=body).execute()
-    busy_periods = result["calendars"][calendar_id]["busy"]
-    return [
+    busy_raw = result["calendars"][calendar_id]["busy"]
+    busy_periods = [
         {"start": _to_naive_local(date_parser.parse(b["start"])), "end": _to_naive_local(date_parser.parse(b["end"]))}
-        for b in busy_periods
+        for b in busy_raw
     ]
+    _freebusy_cache[key] = (busy_periods, time.monotonic() + FREEBUSY_CACHE_TTL_SECONDS)
+    return busy_periods
 
 
 def insert_event(summary: str, start: dt.datetime, end: dt.datetime, calendar_id: str = "primary") -> dict:
@@ -135,7 +172,13 @@ def insert_event(summary: str, start: dt.datetime, end: dt.datetime, calendar_id
         "start": {"dateTime": _localize(start).isoformat(), "timeZone": settings.user_timezone},
         "end": {"dateTime": _localize(end).isoformat(), "timeZone": settings.user_timezone},
     }
-    return service.events().insert(calendarId=calendar_id, body=body).execute()
+    result = service.events().insert(calendarId=calendar_id, body=body).execute()
+    # A just-made booking can make any cached freebusy window stale (the same conversation might
+    # immediately search/check again nearby) - clearing entirely is simpler and safer than trying
+    # to figure out which cached windows overlap the new event, and bookings are rare relative to
+    # searches so the lost cache hits don't cost anything real.
+    _freebusy_cache.clear()
+    return result
 
 
 @_retry_transient

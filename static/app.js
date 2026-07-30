@@ -130,6 +130,10 @@ function ensureVAD() {
       startOnLoad: false, // we control exactly when listening begins, via startVAD()
       positiveSpeechThreshold: 0.6,
       negativeSpeechThreshold: 0.35,
+      // The model/worklet files ship inside the vad-web package itself, not on our server -
+      // without these, the default relative "./" resolves against OUR origin and 404s.
+      baseAssetPath: "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.30/dist/",
+      onnxWASMBasePath: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/",
       onSpeechEnd: () => endTurnFromVAD(),
     }).then((instance) => {
       vadInstance = instance;
