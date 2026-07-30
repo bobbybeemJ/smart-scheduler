@@ -114,11 +114,31 @@ function playNext() {
 // the stop (manual tap, VAD, or the browser's own timeout as a last-resort backstop).
 const VAD_SILENCE_MS = 1400;
 const VAD_SPEECH_THRESHOLD = 0.02; // normalized RMS (0-1); tune against real mic/room noise floor
+// Cheap, non-LLM stand-in for "does this sound finished": if the last word transcribed before
+// silence is a conjunction/filler that's almost never how a real request ends ("...and", "so",
+// "um"), the speaker is very likely mid-thought, not done - so silence is given extra room before
+// ending the turn. Only extends the wait, never shortens it below VAD_SILENCE_MS, so this can only
+// reduce false cutoffs, never introduce a new "ended too early" case that wasn't already possible.
+const VAD_TRAILING_GRACE_MS = 700;
+const VAD_INCOMPLETE_TRAILING_WORDS = new Set([
+  "and", "but", "or", "so", "because", "um", "uh", "like",
+  "the", "a", "an", "to", "for", "with", "at", "in", "on",
+  "is", "was", "my", "our", "that", "if", "when", "i", "we",
+  "let", "lets", "let's", "gonna", "going",
+]);
 let vadAudioCtx = null;
 let vadAnalyser = null;
 let vadRafId = null;
 let vadHasSpoken = false;
 let vadLastSpeechAt = 0;
+
+// accumulatedTranscript is declared further down but already initialized by the time this ever
+// runs (tick() only fires asynchronously, well after the whole script has executed top-to-bottom).
+function vadSilenceDeadline() {
+  const words = accumulatedTranscript.trim().split(/\s+/);
+  const last = (words[words.length - 1] || "").toLowerCase().replace(/[^a-z']/g, "");
+  return VAD_INCOMPLETE_TRAILING_WORDS.has(last) ? VAD_SILENCE_MS + VAD_TRAILING_GRACE_MS : VAD_SILENCE_MS;
+}
 
 function startVAD(stream) {
   stopVAD();
@@ -144,7 +164,7 @@ function startVAD(stream) {
     if (rms > VAD_SPEECH_THRESHOLD) {
       vadHasSpoken = true;
       vadLastSpeechAt = now;
-    } else if (vadHasSpoken && now - vadLastSpeechAt > VAD_SILENCE_MS) {
+    } else if (vadHasSpoken && now - vadLastSpeechAt > vadSilenceDeadline()) {
       // Triggers stop() on whichever engine is active; its onend/onstop handler calls stopVAD()
       // once the stop actually completes - just don't reschedule another tick from here.
       endTurnFromVAD();
