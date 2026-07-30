@@ -100,6 +100,77 @@ function playNext() {
   audio.play().catch(() => playNext());
 }
 
+// --- Voice Activity Detection (end-of-turn) ---
+// Neither STT path had a real, controlled notion of "the user is done talking": the Web Speech
+// engine only stopped on a manual second tap or its own opaque internal silence timeout, and the
+// MediaRecorder fallback was pure push-to-talk. This reads actual mic energy in real time (via
+// Web Audio's AnalyserNode, on a getUserMedia stream requested purely for metering - independent
+// of whatever the STT engine does internally with audio) and ends the turn itself once speech has
+// been detected and then stays below the noise floor for VAD_SILENCE_MS. A brief mid-sentence
+// breath stays under that duration and does not end the turn; continuous=true below still also
+// guards against the recognition engine itself giving up on a short pause. VAD's only
+// responsibility is deciding WHEN to call stop() on whichever engine is active - the existing
+// onend/onstop handlers still own sending the transcript, unchanged regardless of what triggered
+// the stop (manual tap, VAD, or the browser's own timeout as a last-resort backstop).
+const VAD_SILENCE_MS = 1400;
+const VAD_SPEECH_THRESHOLD = 0.02; // normalized RMS (0-1); tune against real mic/room noise floor
+let vadAudioCtx = null;
+let vadAnalyser = null;
+let vadRafId = null;
+let vadHasSpoken = false;
+let vadLastSpeechAt = 0;
+
+function startVAD(stream) {
+  stopVAD();
+  vadAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  vadAudioCtx.resume().catch(() => {}); // some browsers start a fresh context suspended
+  const source = vadAudioCtx.createMediaStreamSource(stream);
+  vadAnalyser = vadAudioCtx.createAnalyser();
+  vadAnalyser.fftSize = 512;
+  source.connect(vadAnalyser);
+  const data = new Uint8Array(vadAnalyser.fftSize);
+  vadHasSpoken = false;
+  vadLastSpeechAt = 0;
+
+  function tick() {
+    vadAnalyser.getByteTimeDomainData(data);
+    let sumSquares = 0;
+    for (let i = 0; i < data.length; i++) {
+      const centered = (data[i] - 128) / 128;
+      sumSquares += centered * centered;
+    }
+    const rms = Math.sqrt(sumSquares / data.length);
+    const now = Date.now();
+    if (rms > VAD_SPEECH_THRESHOLD) {
+      vadHasSpoken = true;
+      vadLastSpeechAt = now;
+    } else if (vadHasSpoken && now - vadLastSpeechAt > VAD_SILENCE_MS) {
+      // Triggers stop() on whichever engine is active; its onend/onstop handler calls stopVAD()
+      // once the stop actually completes - just don't reschedule another tick from here.
+      endTurnFromVAD();
+      return;
+    }
+    vadRafId = requestAnimationFrame(tick);
+  }
+  vadRafId = requestAnimationFrame(tick);
+}
+
+function stopVAD() {
+  if (vadRafId) cancelAnimationFrame(vadRafId);
+  vadRafId = null;
+  if (vadAudioCtx) vadAudioCtx.close().catch(() => {});
+  vadAudioCtx = null;
+  vadAnalyser = null;
+}
+
+function endTurnFromVAD() {
+  if (recognition && listening) {
+    recognition.stop();
+  } else if (mediaRecorder && mediaRecorder.state !== "inactive") {
+    mediaRecorder.stop();
+  }
+}
+
 // --- Speech input: Web Speech API primary, MediaRecorder fallback ---
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recognition = null;
@@ -108,6 +179,7 @@ let recordedChunks = [];
 let listening = false;
 let hasListenedBefore = false;
 let accumulatedTranscript = "";
+let currentMicStream = null;
 
 function sendTranscript(text, source) {
   logEntry(text, "user");
@@ -122,16 +194,34 @@ function setListening(value) {
   micBtn.setAttribute("aria-label", value ? "Stop speaking" : "Start speaking");
 }
 
+function releaseMicStream() {
+  if (currentMicStream) {
+    currentMicStream.getTracks().forEach((track) => track.stop());
+    currentMicStream = null;
+  }
+}
+
 // Shared by the manual tap and the auto-relisten-after-reply trigger below, so both go through
 // the exact same startup path (and both benefit from onstart gating "Listening" on real
-// readiness, not just the call to start()).
-function startListening() {
+// readiness, not just the call to start()). getUserMedia is requested here - and awaited -
+// before recognition.start(), purely so VAD has a raw audio stream to meter; the Web Speech
+// engine still does its own separate internal capture and is unaffected by this stream.
+async function startListening() {
   if (!recognition || listening) return;
   accumulatedTranscript = "";
   micBtn.disabled = true; // briefly, until onstart confirms the engine is actually ready
   micHint.textContent = "Starting…";
-  recognition.start();
   hasListenedBefore = true;
+  try {
+    currentMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (err) {
+    logEntry("Microphone permission is required to listen.", "error");
+    micBtn.disabled = false;
+    micHint.textContent = "Tap the mic to start speaking";
+    return;
+  }
+  startVAD(currentMicStream);
+  recognition.start();
 }
 
 if (SpeechRecognition) {
@@ -140,9 +230,8 @@ if (SpeechRecognition) {
   // silently truncating anything said after it (e.g. "schedule a meeting for next Wednesday"
   // <pause> "at 3pm" would only ever send the first half) - found from real usage where several
   // turns arrived as obvious sentence fragments. continuous=true keeps listening across pauses;
-  // the session now only ends when the user deliberately taps the mic again to stop, or the
-  // browser's own silence timeout ends it (see onend - it does NOT auto-relisten itself, only a
-  // genuinely new bot reply does, so a quiet room doesn't turn into a listening loop).
+  // VAD above now owns ending the turn on real silence, with the browser's own internal timeout
+  // remaining only as a last-resort backstop if VAD's stream/AudioContext ever fails.
   recognition.continuous = true;
   recognition.interimResults = false;
   recognition.lang = "en-US";
@@ -160,9 +249,13 @@ if (SpeechRecognition) {
   recognition.onerror = (e) => {
     logEntry(`recognition error: ${e.error}`, "error");
     setListening(false); // otherwise an error left the button stuck showing "tap to stop"
+    stopVAD();
+    releaseMicStream();
   };
   recognition.onend = () => {
     setListening(false);
+    stopVAD();
+    releaseMicStream();
     const text = accumulatedTranscript.trim();
     accumulatedTranscript = "";
     if (text) sendTranscript(text, "web_speech");
@@ -195,17 +288,20 @@ if (SpeechRecognition) {
   micBtn.onclick = async () => {
     if (!listening) {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      currentMicStream = stream;
       recordedChunks = [];
       mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
       mediaRecorder.ondataavailable = (e) => recordedChunks.push(e.data);
       mediaRecorder.onstop = async () => {
+        stopVAD();
         const blob = new Blob(recordedChunks, { type: "audio/webm" });
         const base64 = await blobToBase64(blob);
         ws.send(JSON.stringify({ type: "audio_chunk", data_base64: base64, is_final: true }));
-        stream.getTracks().forEach((track) => track.stop());
+        releaseMicStream();
       };
       mediaRecorder.start();
       setListening(true);
+      startVAD(stream);
     } else {
       mediaRecorder.stop();
       setListening(false);
