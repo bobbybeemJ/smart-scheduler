@@ -63,8 +63,10 @@ python -m scripts.terminal_chat
 pytest
 ```
 
-125 tests, fully offline (mocked LLM responses and calendar fixtures - no network or real
-credentials needed anywhere in the suite).
+131 tests, fully offline (mocked LLM responses and calendar fixtures - no network or real
+credentials needed anywhere in the suite), except two that deliberately call the real Claude API
+directly since a mocked LLM can't exercise real tool-schema behavior (see
+[Testing strategy](#testing-strategy)).
 
 ---
 
@@ -93,7 +95,7 @@ numbers: `docs/latency.md`.
 3. [Architecture](#architecture)
 4. [The LLM layer, in depth](#the-llm-layer-in-depth)
 5. [Deterministic overrides - when the dialogue layer doesn't trust the LLM](#deterministic-overrides---when-the-dialogue-layer-doesnt-trust-the-llm)
-6. [Voice pipeline](#voice-pipeline-stttts)
+6. [Voice pipeline](#voice-pipeline-sttvadtts)
 7. [Testing strategy](#testing-strategy)
 8. [Deployment](#deployment)
 9. [Explored and rejected: Render](#explored-and-rejected-render)
@@ -250,7 +252,7 @@ just "the first chronological slot."
 `manager.py` is the state machine: decide whether there's enough information to search yet,
 carry over anything already established across a mid-conversation correction, and route to the
 right handler based on what kind of thing the user just said. `templates.py` assembles the
-spoken reply as a list of clauses (not one string) - see [Voice pipeline](#voice-pipeline-stttts)
+spoken reply as a list of clauses (not one string) - see [Voice pipeline](#voice-pipeline-sttvadtts)
 for why that shape matters for latency.
 
 ### `app/calendar_client/` - Google Calendar
@@ -283,6 +285,24 @@ tool's own `description` can carry (the `simple_datetime` vs `relative_range` bo
 `out_of_scope` vs an incomplete-but-real request), not a "tool choice guide" restating what each
 tool already says about itself, and no exhaustive worked examples. Tested clean without the
 Gemini-style hand-holding that turned out to be necessary for the other backend.
+
+**Real bug found via live testing: `duration_minutes` vs `buffer_minutes` confusion.** "Find me 30
+minutes after my last meeting today" came back with `duration_minutes=None` and
+`buffer_minutes=30` - the meeting's own stated length got misfiled as a buffer/gap instead. Root
+cause: `schedule_dynamic_buffer`'s `buffer_minutes` was marked required in the tool schema (and
+non-optional with no default in the `DynamicBuffer` Pydantic model), forcing the model to put the
+sentence's only number *somewhere* even when no genuine buffer was stated at all - the exact same
+"required field forces invention" trap this file's own `reference_event_name` and
+`DeadlineBefore.buffer_minutes` had already hit and fixed, just not applied to this one sibling
+field the first time. This wasn't a new category of bug needing a one-off regex, either - the
+system prompt already has a working, general rule that `duration_minutes` can appear anywhere in a
+sentence; this was a different failure mode entirely, a genuine ambiguity between two
+similar-sounding but distinct fields that share the same "N minutes" surface shape. Fixed
+generally: `buffer_minutes` is now optional (defaults to `0`) at both the schema and Pydantic
+level, with a sharpened field description and an explicit system-prompt rule distinguishing "a
+wait/gap before the meeting" from "the meeting's own length." Verified the legitimate buffer case
+(a real stated gap) still extracts correctly after the fix - see
+`tests/test_llm_duration_vs_buffer_disambiguation.py`.
 
 ### `gemini` (fallback) - `app/llm/gemini_backend.py`
 
@@ -373,12 +393,46 @@ Both are scoped narrowly to the exact reproduced patterns (a bare weekday correc
 to every kind - `event_relative`/`dynamic_buffer` don't have a single anchor weekday to correct
 the same way, so the same trick doesn't obviously apply there yet.
 
-## Voice pipeline (STT/TTS)
+## Voice pipeline (STT/VAD/TTS)
 
 **STT**: the browser's Web Speech API is the primary path (zero server cost, transcribes
 client-side). If unavailable (e.g. Firefox), the browser falls back to `MediaRecorder`, streaming
 a webm/opus blob to the server, where `faster-whisper` transcribes it - lazily loaded only on
 first actual use, to keep idle memory low when the fallback never triggers.
+
+**VAD (automated end-of-turn detection)**: real voice activity detection -
+[`@ricky0123/vad-web`](https://github.com/ricky0123/vad) running a Silero neural speech/non-speech
+classifier client-side via WASM - decides when the user has actually stopped talking, rather than
+either a manual second tap or the Web Speech API's own opaque internal silence timeout, which were
+all that existed before. The model reads real mic energy per audio frame and ends the
+turn once speech has been detected and then stays below the noise floor for `redemptionMs`
+(left at the library's own default, 1400ms - long enough to survive a natural mid-sentence pause,
+short enough to feel responsive, and coincidentally the same number this app had already converged
+on independently before switching to a real model). `positiveSpeechThreshold`/
+`negativeSpeechThreshold` are set to `0.6`/`0.35` - more conservative than the library's defaults
+(`0.3`/`0.25`) - matching a configuration seen tested in a comparable real implementation, to
+reduce false triggers from background noise.
+
+One `MicVAD` instance is created once per page load and pre-warmed immediately (loading the ONNX
+model over the network takes a real moment that shouldn't eat into the gap between "the bot
+finishes speaking" and "the user can talk"), then reused across the whole session via
+`start()`/`pause()` rather than recreated per turn. It manages its own microphone stream,
+independent of whichever STT engine is actually transcribing - VAD's only responsibility is
+deciding *when* to call `stop()` on the active engine; sending the transcript is still handled
+entirely by the existing `onend`/`onstop` handlers, unchanged.
+
+*Why this library specifically*: found by reviewing a different candidate's public implementation
+of this same assignment, which used it. Verified it's the right choice rather than assuming so -
+checked a competing option that claims better accuracy/latency benchmarks (TEN VAD), which turned
+out to have no legitimate browser/npm package at all (the only "browser" build found is an
+unofficial single-maintainer wrapper) - a real supply-chain risk not worth taking for a public
+deployment over a library that's real, MIT-licensed, actively maintained, and already proven
+working elsewhere.
+
+*Cross-origin isolation requirement*: `vad-web`'s WASM backend needs `SharedArrayBuffer`, which
+only exists on a cross-origin-isolated page - `app/main.py`'s `/` route sets
+`Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: credentialless`
+specifically for this. Missing this causes the model to silently fail to load.
 
 **TTS**: `edge-tts` is primary; `pyttsx3` (offline, `espeak-ng`-backed on Linux) is the fallback
 if it fails, since `edge-tts` is an unofficial, reverse-engineered client with no SLA. A boot-time
@@ -422,11 +476,21 @@ above and `docs/latency.md`), so the actual work went into closing the gap betwe
 
 ## Testing strategy
 
-`pytest` runs 125 tests, fully offline - mocked LLM responses (`app/llm/mock_responses.py`,
+`pytest` runs 131 tests, almost entirely offline - mocked LLM responses (`app/llm/mock_responses.py`,
 keyed by phrase) and fixture Calendar API data (`tests/fixtures/calendar_fixtures.py`), no real
-network or credentials needed anywhere in the suite. Every one of the 6 hard cases has a named
-test module; conflict resolution, mid-conversation state changes, and both deterministic
+network or credentials needed for the vast majority of the suite. Every one of the 6 hard cases has
+a named test module; conflict resolution, mid-conversation state changes, and both deterministic
 overrides described above each have their own dedicated file.
+
+Two tests (`test_llm_duration_vs_buffer_disambiguation.py`) are a deliberate exception - they call
+the real Claude API directly, because the bug they guard against (see
+[Why Claude over Gemini](#why-claude-over-gemini) below) was a real tool-schema defect that a
+canned mock response literally cannot exercise: the mock returns whatever the test expects,
+regardless of what the actual model would do with the actual schema. These use `monkeypatch` to
+force `use_mock_llm=False` for just that test function, rather than a module-level assignment -
+pytest collects (runs the top-level code of) every test module before running any test function,
+so a bare module-level flag gets silently overwritten by whichever file happens to be collected
+last, and several other files in this suite set it to `True` at module level.
 
 That's deliberately not the whole story, though - **the majority of real bugs in this project
 were found by testing against the real LLM and the real deployed service**, not the mocked suite,
@@ -439,6 +503,15 @@ README: construct the exact reported phrase, run it against the real backend in 
 at the *actual* extracted intent (not just the final reply text, which can look correct by
 coincidence), and only then decide whether the fix belongs in the prompt, the schema, or
 deterministic code.
+
+Same principle applied to the VAD integration (see [Voice pipeline](#voice-pipeline-sttvadtts)):
+rather than trusting code review alone, it was verified with headless Chromium driven via
+Playwright, fed a synthesized speech WAV (and a silence clip as a negative control) through a fake
+microphone device, against the actual running page. That test caught a real bug before it ever
+shipped - the VAD model's asset files were 404ing because the default relative path resolved
+against this app's own origin instead of the CDN that actually hosts them - and confirmed,
+afterward, that real speech scores ~99.8% speech-probability against ~5.9% for silence, and that
+`onSpeechEnd` fires exactly once on an actual speech-to-silence transition.
 
 ## Deployment
 
@@ -469,7 +542,13 @@ to build it.
   phase.
 - **OAuth refresh token can expire.** Apps still in OAuth "Testing" publish status get a ~7-day
   refresh token lifetime. If calendar reads/writes start failing with an auth error, re-run
-  `scripts/oauth_bootstrap.py` and update the deployed env var.
+  `scripts/oauth_bootstrap.py` and update the deployed env var. Hit this for real once already -
+  the fix each time is a re-run of the bootstrap script, not a code change.
+- **VAD thresholds are tuned starting points, not exhaustively calibrated.**
+  `positiveSpeechThreshold`/`negativeSpeechThreshold` (0.6/0.35) were verified correct against
+  synthesized speech vs. silence in an automated test, but haven't been tuned across a wide range
+  of real microphones, room noise floors, or accents - a genuinely noisy environment may need
+  different values.
 - **The 800ms end-to-end latency target isn't realistically met** on this stack - see
   `docs/latency.md` for real measured numbers per hop and the perceived-latency mask used to
   soften it.
