@@ -18,6 +18,10 @@ def _always_free(start, end):
     return []
 
 
+def _fake_insert_event(summary, start, end):
+    return {"id": "fake-event-id"}
+
+
 def _fully_busy_until_august(start, end):
     """Busy for all of July, free from August onward. Must return a busy block that actually
     overlaps only the pre-August portion of the queried range - returning one block covering
@@ -244,7 +248,7 @@ def test_slot_decision_select_index_via_llm_fallback_when_fast_path_is_ambiguous
     None and this must fall through to real LLM classification (slot_decision) instead of
     misfiring into contextual_reference - which is exactly what happened when this phrase was
     tested directly against real Gemini before slot_decision existed."""
-    manager = DialogueManager(now_fn=lambda: NOW, freebusy_fn=_always_free)
+    manager = DialogueManager(now_fn=lambda: NOW, freebusy_fn=_always_free, insert_event_fn=_fake_insert_event)
     manager.handle_turn("Tuesday at 2pm")
     assert manager.state.phase == "confirming"
     assert manager.state.top_candidates
@@ -257,7 +261,7 @@ def test_slot_decision_select_index_via_llm_fallback_when_fast_path_is_ambiguous
 
 
 def test_slot_decision_confirm_top_via_llm_fallback():
-    manager = DialogueManager(now_fn=lambda: NOW, freebusy_fn=_always_free)
+    manager = DialogueManager(now_fn=lambda: NOW, freebusy_fn=_always_free, insert_event_fn=_fake_insert_event)
     manager.handle_turn("Tuesday at 2pm")
     assert manager.state.phase == "confirming"
 

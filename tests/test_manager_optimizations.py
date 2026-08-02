@@ -17,8 +17,16 @@ def _always_free(start, end):
     return []
 
 
+def _fake_insert_event(summary, start, end):
+    # Without this, these tests silently fall through to DialogueManager's default
+    # insert_event_fn (the real Calendar API) - found the hard way when a live OAuth token
+    # expired and these were the only tests in the suite that noticed, despite this file's own
+    # docstring claiming "zero network."
+    return {"id": "fake-event-id"}
+
+
 def test_multiple_candidates_are_offered_and_ordinal_selection_books_the_right_one():
-    manager = DialogueManager(now_fn=lambda: NOW, freebusy_fn=_always_free)
+    manager = DialogueManager(now_fn=lambda: NOW, freebusy_fn=_always_free, insert_event_fn=_fake_insert_event)
     reply = manager.handle_turn("1-hour meeting for the last weekday of this month")
 
     assert len(manager.state.top_candidates) > 1, "expected multiple ranked options to be offered"
@@ -34,7 +42,7 @@ def test_multiple_candidates_are_offered_and_ordinal_selection_books_the_right_o
 
 
 def test_bare_confirmation_still_books_the_first_option_by_default():
-    manager = DialogueManager(now_fn=lambda: NOW, freebusy_fn=_always_free)
+    manager = DialogueManager(now_fn=lambda: NOW, freebusy_fn=_always_free, insert_event_fn=_fake_insert_event)
     manager.handle_turn("1-hour meeting for the last weekday of this month")
     first_option = manager.state.top_candidates[0]
 

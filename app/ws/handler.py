@@ -38,26 +38,36 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
     try:
         while True:
-            raw = await websocket.receive_json()
-            msg_type = raw.get("type")
+            try:
+                raw = await websocket.receive_json()
+                msg_type = raw.get("type") if isinstance(raw, dict) else None
 
-            if msg_type == "transcript":
-                msg = TranscriptMessage.model_validate(raw)
-                logger.info("transcript (%s): %r", msg.source, msg.text)
-                await _handle_turn(websocket, manager, msg.text, stt_ms=0.0)
+                if msg_type == "transcript":
+                    msg = TranscriptMessage.model_validate(raw)
+                    logger.info("transcript (%s): %r", msg.source, msg.text)
+                    await _handle_turn(websocket, manager, msg.text, stt_ms=0.0)
 
-            elif msg_type == "audio_chunk":
-                msg = AudioChunkMessage.model_validate(raw)
-                audio_buffer.extend(base64.b64decode(msg.data_base64))
-                if msg.is_final:
-                    text, stt_ms = await _transcribe_fallback_safe(websocket, bytes(audio_buffer))
-                    audio_buffer.clear()
-                    if text:
-                        logger.info("transcript (whisper_fallback): %r", text)
-                        await _handle_turn(websocket, manager, text, stt_ms=stt_ms)
+                elif msg_type == "audio_chunk":
+                    msg = AudioChunkMessage.model_validate(raw)
+                    audio_buffer.extend(base64.b64decode(msg.data_base64))
+                    if msg.is_final:
+                        text, stt_ms = await _transcribe_fallback_safe(websocket, bytes(audio_buffer))
+                        audio_buffer.clear()
+                        if text:
+                            logger.info("transcript (whisper_fallback): %r", text)
+                            await _handle_turn(websocket, manager, text, stt_ms=stt_ms)
 
-            else:
-                await websocket.send_json(ErrorMessage(message=f"Unknown message type: {msg_type!r}").model_dump())
+                else:
+                    await websocket.send_json(ErrorMessage(message=f"Unknown message type: {msg_type!r}").model_dump())
+
+            except WebSocketDisconnect:
+                raise
+            except Exception:
+                # A malformed message (bad JSON, wrong field types, an invalid literal like a
+                # typo'd source) must not kill the whole connection over one bad message - reply
+                # with a clean error and keep the conversation alive instead.
+                logger.exception("Malformed or invalid client message")
+                await websocket.send_json(ErrorMessage(message="Sorry, that message wasn't in a format I understood.").model_dump())
 
     except WebSocketDisconnect:
         logger.info("Client disconnected")
