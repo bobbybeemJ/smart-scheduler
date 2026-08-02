@@ -183,7 +183,14 @@ class DynamicBuffer(SchedulingRequestBase, HasEarliestTime):
     reference_event_name below carry the "relative to an event" part on their own."""
 
     kind: Literal["dynamic_buffer"] = "dynamic_buffer"
-    buffer_minutes: int
+    buffer_minutes: int = 0
+    """Required-with-no-default used to force the model to invent a value whenever the message
+    stated no genuine buffer at all (e.g. "Find me 30 minutes after my last meeting today" has no
+    buffer/gap concept in it - "30 minutes" is the new meeting's own duration) - it grabbed the
+    only number in the sentence and put it here instead of duration_minutes, since it had to put
+    *something*. Same "required field forces invention" trap as this class's own earlier fix to
+    reference_event_name below, and DeadlineBefore.buffer_minutes's fix, just not applied here
+    too the first time. 0 = no buffer stated = start immediately once the anchor ends."""
     buffer_source: Literal["last_meeting_today", "named_event"] = "last_meeting_today"
     reference_event_name: Optional[str] = None
     """Only set when buffer_source == "named_event" - e.g. "my call with Sarah" - resolved via

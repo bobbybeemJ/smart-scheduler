@@ -231,8 +231,12 @@ def _resolve_dynamic_buffer(
     elif stated_earliest is not None:
         earliest_start = stated_earliest
     else:
+        # This string is spoken to the user almost verbatim (see templates.could_not_find_reference)
+        # - found via real testing that the previous internal-jargon wording ("dynamic_buffer has
+        # neither a stated clock time nor a resolvable anchor event...") got read out loud as-is,
+        # exactly the kind of robotic phrasing a human-sounding assistant shouldn't produce.
         raise UnresolvedReferenceError(
-            "dynamic_buffer has neither a stated clock time nor a resolvable anchor event to buffer from"
+            "there's no meeting on your calendar today to schedule after, and no specific time was mentioned"
         )
 
     end_of_evening = dt.datetime.combine(today, dt.time(hour=helpers.DEFAULT_EVENING_END_HOUR))

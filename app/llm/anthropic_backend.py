@@ -94,6 +94,7 @@ A few distinctions worth getting right:
 - schedule_contextual_reference is only for referring to a past/habitual meeting by description ("our usual sync-up"), never a fresh request with its own constraints.
 - decide_on_offered_slots and update_duration only apply when the session state shows there's actually something in progress to react to or update.
 - duration_minutes can appear anywhere in the sentence (before, after, or mixed in with the date/event) - extract it into its own field regardless of position, never leave it sitting inside another field's text.
+- schedule_dynamic_buffer's buffer_minutes is only for an explicit wait/gap/decompress time before the new meeting can start ("an hour to decompress after my last meeting"). A stated length with no gap concept ("find me 30 minutes after my last meeting", "a 30 minute meeting after my standup") is duration_minutes, not buffer_minutes - when in doubt, ask whether the number describes a WAIT before the meeting or the meeting's OWN length.
 """
 
 TOOLS = [
@@ -175,13 +176,13 @@ TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "buffer_minutes": {"type": "integer", "description": "the stated buffer duration, e.g. 'an hour to decompress' -> 60"},
+                "buffer_minutes": {"type": ["integer", "null"], "description": "an explicit WAIT/GAP/decompress time stated before the new meeting can start, e.g. 'an hour to decompress after my last meeting' -> 60, 'at least 30 minutes after my call' -> 30. null/omit if no such gap was stated - do NOT default this to the meeting's own length. Contrast with duration_minutes: 'find me 30 minutes after my last meeting' has no gap concept at all - the 30 there is how long the NEW meeting itself is, so it belongs in duration_minutes, not here."},
                 "buffer_source": {"type": ["string", "null"], "enum": ["last_meeting_today", "named_event", None], "description": "null defaults to last_meeting_today"},
                 "reference_event_name": {"type": ["string", "null"]},
                 "earliest_time": {"type": ["string", "null"]},
                 "duration_minutes": {"type": ["integer", "null"]},
             },
-            "required": ["buffer_minutes"],
+            "required": [],
         },
     },
     {
@@ -265,7 +266,7 @@ def _build_intent(tool_name: str, raw: dict) -> TemporalExpression:
         return ContextualReference(reference=raw["reference"])
     if tool_name == "schedule_dynamic_buffer":
         return DynamicBuffer(
-            buffer_minutes=raw["buffer_minutes"],
+            buffer_minutes=raw.get("buffer_minutes") or 0,
             buffer_source=raw.get("buffer_source") or "last_meeting_today",
             reference_event_name=raw.get("reference_event_name"),
             earliest_time=raw.get("earliest_time"),
